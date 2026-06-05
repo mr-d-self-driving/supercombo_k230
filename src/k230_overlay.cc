@@ -242,8 +242,12 @@ private:
     void redraw_overlay()
     {
         const uint64_t draw_start = profile_ ? k230_now_ns() : 0;
-        overlay_.draw(overlay_buffer_, have_model_state_ ? latest_output_ : ParsedModelOutput{},
-                      have_model_state_ ? latest_projection_ : default_projection_);
+        overlay_.draw_argb(static_cast<uint8_t *>(overlay_buffer_->map),
+                           static_cast<int>(overlay_buffer_->width),
+                           static_cast<int>(overlay_buffer_->height),
+                           static_cast<int>(overlay_buffer_->stride),
+                           have_model_state_ ? latest_output_ : ParsedModelOutput{},
+                           have_model_state_ ? latest_projection_ : default_projection_);
         if (profile_) overlay_stats_.add(k230_now_ns() - draw_start);
 
         const uint64_t present_start = profile_ ? k230_now_ns() : 0;

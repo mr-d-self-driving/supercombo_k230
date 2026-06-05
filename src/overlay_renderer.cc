@@ -56,16 +56,12 @@ void draw_points(cv::Mat &img,
 
 } // namespace
 
-void OverlayRenderer::draw(display_buffer *buffer, const ParsedModelOutput &output,
-                           const ProjectionState &projection) const
+void OverlayRenderer::draw_mat(cv::Mat &frame, const ParsedModelOutput &output,
+                               const ProjectionState &projection) const
 {
     constexpr float kLeadProbabilityThreshold = 0.5f;
     constexpr int kLeadTimeIndex = 0;
 
-    const int width = static_cast<int>(buffer->width);
-    const int height = static_cast<int>(buffer->height);
-    const int stride = static_cast<int>(buffer->stride);
-    cv::Mat frame(height, width, CV_8UC4, buffer->map, static_cast<size_t>(stride));
     frame.setTo(cv::Scalar(0, 0, 0, 0));
 
     if (output.valid) {
@@ -91,11 +87,19 @@ void OverlayRenderer::draw(display_buffer *buffer, const ParsedModelOutput &outp
         if (output.leads.primary(kLeadTimeIndex, kLeadProbabilityThreshold, &lead)) {
             int px = 0;
             int py = 0;
-            if (project_point(projection, lead.x, lead.y, kModelHeight, width, height, &px, &py)) {
+            if (project_point(projection, lead.x, lead.y, kModelHeight, frame.cols, frame.rows, &px, &py)) {
                 const int radius = std::max(7, std::min(15, static_cast<int>(18.0f - lead.x * 0.08f)));
                 draw_triangle_marker(frame, px, py, radius, bgra(255, 255, 255));
                 cv::circle(frame, cv::Point(px, py), 3, bgra(0, 0, 255), cv::FILLED, cv::LINE_8);
             }
         }
     }
+}
+
+void OverlayRenderer::draw_argb(uint8_t *argb, int width, int height, int stride,
+                                const ParsedModelOutput &output,
+                                const ProjectionState &projection) const
+{
+    cv::Mat frame(height, width, CV_8UC4, argb, static_cast<size_t>(stride));
+    draw_mat(frame, output, projection);
 }

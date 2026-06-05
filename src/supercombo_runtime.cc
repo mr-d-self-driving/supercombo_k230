@@ -207,7 +207,11 @@ int SupercomboRuntime::frame_handler(v4l2_drm_context *context, bool displayed)
                 output = latest_output_;
                 projection = latest_projection_;
             }
-            overlay_.draw(draw_buffer_, output, projection);
+            overlay_.draw_argb(static_cast<uint8_t *>(draw_buffer_->map),
+                               static_cast<int>(draw_buffer_->width),
+                               static_cast<int>(draw_buffer_->height),
+                               static_cast<int>(draw_buffer_->stride),
+                               output, projection);
             thead_csi_dcache_clean_invalid_range(draw_buffer_->map, draw_buffer_->size);
             display_update_buffer(draw_buffer_, 0, 0);
             last_drawn_buffer_ = buffer;

@@ -358,6 +358,20 @@ Fixed production defaults:
   `overlay=10`, optional `pandad=10`, optional `controlsd=5`.
 - The front-vehicle marker is always enabled with probability threshold `0.5`.
 
+## Raspberry Pi 4 port
+
+An experimental Raspberry Pi 4 runtime is available with
+`-DSUPERCOMBO_BUILD_RUNTIME=OFF -DSUPERCOMBO_BUILD_RPI4=ON`. It keeps the same
+shared `512x256 NV12` frame ring and model-state IPC contract, but replaces K230
+nncase/display hardware with ncnn CPU BF16 and OpenCV-based camera/overlay
+backends.
+`rpi_manager.py` can launch `rpi_camerad`, `rpi_modeld`, and `rpi_overlay`
+together. `rpi_overlay` supports headless composition, OpenCV HighGUI, and
+direct RGB565 framebuffer output with `RPI_DISPLAY=fb`.
+
+See [docs/rpi4_port.md](docs/rpi4_port.md) for the build commands, model paths,
+smoke tests, measured FPS, and current USB camera status.
+
 Benchmark and diagnostic utilities live under `benchmarks/` and are not built
 by default. Build them explicitly with:
 

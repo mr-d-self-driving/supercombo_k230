@@ -5,6 +5,7 @@ project(supercombo_k230 LANGUAGES C CXX)
 option(SUPERCOMBO_BUILD_BENCHMARKS "Build standalone benchmark/diagnostic utilities" OFF)
 option(SUPERCOMBO_BUILD_PANDA "Build optional panda USB/CAN bridge" OFF)
 option(SUPERCOMBO_BUILD_RUNTIME "Build K230 runtime binaries" ON)
+option(SUPERCOMBO_BUILD_RPI4 "Build Raspberry Pi 4 runtime binaries" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +33,20 @@ set(PROJECT_LOCAL_INCLUDES
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 set(PROJECT_SYSTEM_INCLUDES)
+
+set(COMMON_SOURCES
+  src/app_config.cc
+  src/model_output.cc
+  src/projection.cc
+)
+
+set(PORTABLE_MODEL_SOURCES
+  src/calibration_service.cc
+  src/k230_ipc.cc
+  src/lateral_control.cc
+  src/model_input_transform.cc
+  src/online_calibrator.cc
+)
 
 if(SUPERCOMBO_BUILD_RUNTIME)
   find_package(OpenCV REQUIRED COMPONENTS core imgproc)
@@ -97,21 +112,11 @@ if(SUPERCOMBO_BUILD_RUNTIME)
     )
   endfunction()
 
-  set(COMMON_SOURCES
-    src/app_config.cc
-    src/model_output.cc
-    src/projection.cc
-  )
-
   set(MODEL_SOURCES
     src/ai_base.cc
-    src/calibration_service.cc
     src/input_source.cc
-    src/k230_ipc.cc
-    src/lateral_control.cc
-    src/model_input_transform.cc
-    src/online_calibrator.cc
     src/supercombo_model.cc
+    ${PORTABLE_MODEL_SOURCES}
   )
 
   add_executable(supercombo_elf
@@ -175,6 +180,67 @@ if(SUPERCOMBO_BUILD_RUNTIME)
     )
     configure_k230_target(k230_pandad ${LIBUSB_LIBRARIES})
   endif()
+endif()
+
+if(SUPERCOMBO_BUILD_RPI4)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio)
+  find_package(OpenMP)
+
+  set(NCNN_INCLUDE_DIRS
+      "/home/chan/onnx_bench/ncnn-src/src;/home/chan/onnx_bench/ncnn-build-a72-no82/src"
+      CACHE STRING "Semicolon-separated ncnn include directories")
+  set(NCNN_LIBRARY
+      "/home/chan/onnx_bench/ncnn-build-a72-no82/src/libncnn.a"
+      CACHE FILEPATH "ncnn static library")
+  if(NOT EXISTS "${NCNN_LIBRARY}")
+    message(FATAL_ERROR
+      "Missing ncnn library: ${NCNN_LIBRARY}\n"
+      "Set -DNCNN_LIBRARY=/path/to/libncnn.a and -DNCNN_INCLUDE_DIRS=/path/to/src;/path/to/build/src")
+  endif()
+  foreach(required_include IN LISTS NCNN_INCLUDE_DIRS)
+    if(NOT IS_DIRECTORY "${required_include}")
+      message(FATAL_ERROR
+        "Missing ncnn include directory: ${required_include}\n"
+        "Set -DNCNN_INCLUDE_DIRS=/path/to/ncnn/src;/path/to/ncnn/build/src")
+    endif()
+  endforeach()
+
+  add_library(supercombo_rpi_core STATIC
+    ${COMMON_SOURCES}
+    ${PORTABLE_MODEL_SOURCES}
+  )
+  target_include_directories(supercombo_rpi_core PUBLIC ${PROJECT_LOCAL_INCLUDES})
+  target_compile_options(supercombo_rpi_core PRIVATE ${PROJECT_WARNINGS})
+  target_link_libraries(supercombo_rpi_core PUBLIC pthread)
+
+  function(configure_rpi_target target)
+    target_include_directories(${target} PRIVATE ${PROJECT_LOCAL_INCLUDES})
+    target_include_directories(${target} SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS} ${NCNN_INCLUDE_DIRS})
+    target_compile_options(${target} PRIVATE ${PROJECT_WARNINGS})
+    target_link_libraries(${target} PRIVATE ${ARGN} pthread atomic)
+  endfunction()
+
+  add_executable(rpi_modeld
+    src/rpi_modeld.cc
+    src/ncnn_supercombo_model.cc
+  )
+  configure_rpi_target(rpi_modeld supercombo_rpi_core ${NCNN_LIBRARY})
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(rpi_modeld PRIVATE OpenMP::OpenMP_CXX)
+  endif()
+
+  add_executable(rpi_camerad src/rpi_camerad.cc)
+  configure_rpi_target(rpi_camerad supercombo_rpi_core ${OpenCV_LIBS})
+
+  add_executable(rpi_overlay
+    src/rpi_overlay.cc
+    src/overlay_renderer.cc
+  )
+  configure_rpi_target(rpi_overlay supercombo_rpi_core ${OpenCV_LIBS})
+
+  install(TARGETS rpi_camerad rpi_modeld rpi_overlay RUNTIME DESTINATION .)
+  install(PROGRAMS rpi_manager.py DESTINATION .)
+  install(PROGRAMS scripts/rpi_smoke.sh DESTINATION scripts)
 endif()
 
 if(SUPERCOMBO_BUILD_BENCHMARKS)

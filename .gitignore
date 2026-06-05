@@ -12,7 +12,11 @@ k230_camerad
 k230_modeld
 k230_overlay
 k230_pandad
+rpi_camerad
+rpi_modeld
+rpi_overlay
 __pycache__/
+output/
 *.pyc
 *.raw
 *.scnv12
