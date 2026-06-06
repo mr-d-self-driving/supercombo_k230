@@ -212,9 +212,13 @@ int main(int argc, char *argv[])
             ? 1000000000ULL / overlay_fps_cap
             : 0;
         const std::string dump_path = env_string_local("RPI_OVERLAY_DUMP", "");
-        const bool debug_hud = env_enabled_local("RPI_OVERLAY_DEBUG_HUD", false) || !dump_path.empty();
+        const bool render_output = !display_none || !dump_path.empty();
+        const bool debug_hud = render_output &&
+            (env_enabled_local("RPI_OVERLAY_DEBUG_HUD", false) || !dump_path.empty());
         if (!display_none && !display_fb)
             cv::namedWindow("supercombo_rpi", cv::WINDOW_NORMAL);
+        if (!render_output)
+            std::fprintf(stderr, "rpi_overlay: headless no-render mode\n");
 
         OverlayRenderer renderer;
         ProjectionState default_projection = make_projection_state(config.projection_mode,
@@ -234,11 +238,16 @@ int main(int argc, char *argv[])
         gettimeofday(&start, nullptr);
         last = start;
 
-        cv::Mat nv12_mat(static_cast<int>(frame_ring.height() * 3 / 2),
-                         static_cast<int>(frame_ring.width()), CV_8UC1);
+        cv::Mat nv12_mat;
+        if (render_output) {
+            nv12_mat = cv::Mat(static_cast<int>(frame_ring.height() * 3 / 2),
+                               static_cast<int>(frame_ring.width()), CV_8UC1);
+        }
         cv::Mat bgr;
         cv::Mat resized;
-        cv::Mat overlay(out_h, out_w, CV_8UC4);
+        cv::Mat overlay;
+        if (render_output)
+            overlay = cv::Mat(out_h, out_w, CV_8UC4);
 
         while (!g_stop) {
             K230ModelState state;
@@ -276,33 +285,35 @@ int main(int argc, char *argv[])
             }
             last_render_ns = now_ns;
 
-            std::memcpy(nv12_mat.data, src, static_cast<size_t>(frame_ring.frame_bytes()));
-            cv::cvtColor(nv12_mat, bgr, cv::COLOR_YUV2BGR_NV12);
-            cv::resize(bgr, resized, cv::Size(out_w, out_h), 0.0, 0.0, cv::INTER_LINEAR);
-            renderer.draw_mat(overlay, have_model ? parsed : ParsedModelOutput{},
-                              have_model ? projection : default_projection);
-            blend_bgra_over_bgr(overlay, resized);
-            if (debug_hud) {
-                cv::rectangle(resized, cv::Rect(0, 0, std::min(140, resized.cols), std::min(32, resized.rows)),
-                              cv::Scalar(30, 30, 30), cv::FILLED, cv::LINE_8);
-                cv::rectangle(resized, cv::Rect(6, 8, 18, 18), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
-                cv::rectangle(resized, cv::Rect(30, 8, 18, 18), cv::Scalar(0, 255, 0), cv::FILLED, cv::LINE_8);
-                cv::rectangle(resized, cv::Rect(54, 8, 18, 18), cv::Scalar(255, 0, 0), cv::FILLED, cv::LINE_8);
-                char text[64];
-                std::snprintf(text, sizeof(text), "f=%u m=%llu", displayed + 1,
-                              static_cast<unsigned long long>(model_seq));
-                cv::putText(resized, text, cv::Point(80, 22), cv::FONT_HERSHEY_SIMPLEX,
-                            0.45, cv::Scalar(255, 255, 255), 1, cv::LINE_8);
-            }
-            if (!dump_path.empty())
-                write_ppm_bgr(dump_path, resized);
+            if (render_output) {
+                std::memcpy(nv12_mat.data, src, static_cast<size_t>(frame_ring.frame_bytes()));
+                cv::cvtColor(nv12_mat, bgr, cv::COLOR_YUV2BGR_NV12);
+                cv::resize(bgr, resized, cv::Size(out_w, out_h), 0.0, 0.0, cv::INTER_LINEAR);
+                renderer.draw_mat(overlay, have_model ? parsed : ParsedModelOutput{},
+                                  have_model ? projection : default_projection);
+                blend_bgra_over_bgr(overlay, resized);
+                if (debug_hud) {
+                    cv::rectangle(resized, cv::Rect(0, 0, std::min(140, resized.cols), std::min(32, resized.rows)),
+                                  cv::Scalar(30, 30, 30), cv::FILLED, cv::LINE_8);
+                    cv::rectangle(resized, cv::Rect(6, 8, 18, 18), cv::Scalar(0, 0, 255), cv::FILLED, cv::LINE_8);
+                    cv::rectangle(resized, cv::Rect(30, 8, 18, 18), cv::Scalar(0, 255, 0), cv::FILLED, cv::LINE_8);
+                    cv::rectangle(resized, cv::Rect(54, 8, 18, 18), cv::Scalar(255, 0, 0), cv::FILLED, cv::LINE_8);
+                    char text[64];
+                    std::snprintf(text, sizeof(text), "f=%u m=%llu", displayed + 1,
+                                  static_cast<unsigned long long>(model_seq));
+                    cv::putText(resized, text, cv::Point(80, 22), cv::FONT_HERSHEY_SIMPLEX,
+                                0.45, cv::Scalar(255, 255, 255), 1, cv::LINE_8);
+                }
+                if (!dump_path.empty())
+                    write_ppm_bgr(dump_path, resized);
 
-            if (display_fb) {
-                fb->present_bgr(resized);
-            } else if (!display_none) {
-                cv::imshow("supercombo_rpi", resized);
-                const int key = cv::waitKey(1);
-                if (key == 27 || key == 'q') break;
+                if (display_fb) {
+                    fb->present_bgr(resized);
+                } else if (!display_none) {
+                    cv::imshow("supercombo_rpi", resized);
+                    const int key = cv::waitKey(1);
+                    if (key == 27 || key == 'q') break;
+                }
             }
             ++displayed;
             if (config.max_frames > 0 && displayed >= config.max_frames) break;

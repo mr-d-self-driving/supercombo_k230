@@ -293,8 +293,13 @@ run_pipeline() {
   if [[ -n "${overlay_dump}" ]]; then
     overlay_env+=(RPI_OVERLAY_DUMP="${overlay_dump}")
   fi
+  overlay_timeout="${OVERLAY_TIMEOUT_SEC:-20}"
   set +e
-  env "${overlay_env[@]}" "${ROOT_DIR}/rpi_overlay" >"${OUT_DIR}/overlay.log" 2>&1
+  if command -v timeout >/dev/null; then
+    timeout "${overlay_timeout}s" env "${overlay_env[@]}" "${ROOT_DIR}/rpi_overlay" >"${OUT_DIR}/overlay.log" 2>&1
+  else
+    env "${overlay_env[@]}" "${ROOT_DIR}/rpi_overlay" >"${OUT_DIR}/overlay.log" 2>&1
+  fi
   overlay_rc=$?
 
   wait "${model_pid}"

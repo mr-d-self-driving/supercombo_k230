@@ -117,6 +117,9 @@ It writes detailed logs to `/tmp/rpi_smoke/perf*.log` and prints `PERF ...`
 summary lines. Use `PERF_MODEL_FRAMES=120` or `PERF_MANAGER_SEC=10` for longer,
 less noisy measurements.
 
+Pipeline smokes run `rpi_overlay` under `timeout` when GNU coreutils is
+available. Override the default 20 seconds with `OVERLAY_TIMEOUT_SEC=...`.
+
 Set `RPI_PROFILE_MODEL=1` to split modeld timing into:
 
 ```text
@@ -141,6 +144,10 @@ OpenCV HighGUI in a desktop display session. `rpi_manager.py` and
 `scripts/rpi_smoke.sh` default to `RPI_DISPLAY=0`, so SSH runs do not try to open
 a HighGUI window unless explicitly requested. On the current Pi, `/dev/fb0` is
 `480x320 RGB565`.
+
+When `RPI_DISPLAY=0` and no `RPI_OVERLAY_DUMP` is requested, `rpi_overlay` uses a
+no-render fast path. It still checks frame/model IPC liveness, but skips
+NV12-to-BGR conversion, resize, overlay drawing, and framebuffer writes.
 
 The Pi defaults are model-throughput oriented:
 
@@ -278,6 +285,9 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | same perf snapshot, manager no overlay | camera `29.21 fps`, model `19.37 fps`, errors `0` |
 | same perf snapshot, manager headless overlay `2 fps` | camera `29.10 fps`, model `18.30 fps`, overlay `8 frames`, errors `0` |
 | same perf snapshot, manager fb overlay `2 fps` | camera `29.20 fps`, model `11.89 fps`, overlay `8 frames`, errors `0`; observed framebuffer stall |
+| headless no-render overlay smoke, 6 sec | `rpi_overlay: headless no-render mode`; camera `29.23 fps`, model `14.24 fps` in a run with non-overlay modeld spikes |
+| no-overlay comparison, 6 sec | camera `29.06 fps`, model `18.12 fps`; also observed non-overlay `231 ms` modeld spike |
+| post-fast-path perf snapshot, 40 model frames / 4 sec manager | model default `19.88 fps`, no-overlay manager `18.10 fps`, headless overlay `18.56 fps`, fb overlay `18.37 fps` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
