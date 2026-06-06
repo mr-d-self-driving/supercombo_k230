@@ -208,14 +208,20 @@ int main(int argc, char *argv[])
         const int request_fps = env_int_local("RPI_CAMERA_FPS", 30);
         if (!synthetic && !replay) {
             const std::string source = camera_source();
+            std::string source_desc;
             if (!source.empty()) {
                 const bool is_device = source.find("/dev/video") == 0;
                 cap.open(source, is_device ? cv::CAP_V4L2 : cv::CAP_ANY);
+                source_desc = source;
             } else {
-                cap.open(env_int_local("RPI_CAMERA_INDEX", 0), cv::CAP_V4L2);
+                const int index = env_int_local("RPI_CAMERA_INDEX", 0);
+                cap.open(index, cv::CAP_V4L2);
+                source_desc = "index=" + std::to_string(index);
             }
             if (!cap.isOpened())
-                throw std::runtime_error("open RPI camera failed");
+                throw std::runtime_error(
+                    "open RPI camera failed source=" + source_desc +
+                    " (run scripts/rpi_smoke.sh camera-probe and set RPI_CAMERA_SOURCE=/dev/videoX)");
 
             cap.set(cv::CAP_PROP_FRAME_WIDTH, request_w);
             cap.set(cv::CAP_PROP_FRAME_HEIGHT, request_h);

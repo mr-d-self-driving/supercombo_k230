@@ -86,6 +86,7 @@ The common smoke commands are wrapped in:
 
 ```sh
 scripts/rpi_smoke.sh model
+scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-replay
 RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
@@ -331,5 +332,10 @@ unable to enumerate USB device
 Once a camera is visible again, run:
 
 ```sh
+scripts/rpi_smoke.sh camera-probe
 RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
 ```
+
+`camera-probe` is expected to fail while no USB UVC or CSI camera is visible.
+It records `lsusb`, V4L2 device listing, `rpicam-vid --list-cameras`, and recent
+camera/USB kernel messages to `/tmp/rpi_smoke/probe.log`.

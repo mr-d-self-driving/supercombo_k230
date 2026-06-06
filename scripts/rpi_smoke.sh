@@ -23,6 +23,7 @@ reset_outputs() {
         "${OUT_DIR}/model.log" \
         "${OUT_DIR}/overlay.log" \
         "${OUT_DIR}/manager.log" \
+        "${OUT_DIR}/probe.log" \
         "${OUT_DIR}/dump_verify.log" \
         "${OUT_DIR}/overlay.ppm"
 }
@@ -118,6 +119,9 @@ summarize_single() {
     camera-replay|camera-real)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done|error)'
       ;;
+    camera-probe)
+      print_matches probe "${OUT_DIR}/probe.log" 'CAMERA_PROBE|/dev/video|No cameras|UVC|Web Camera|Camera|error'
+      ;;
     manager)
       print_matches manager "${OUT_DIR}/manager.log" 'rpi_(manager|camerad|modeld|overlay).*'
       ;;
@@ -144,6 +148,53 @@ require_file() {
     echo "missing file: ${path}" >&2
     exit 2
   fi
+}
+
+run_camera_probe() {
+  reset_outputs
+  set +e
+  {
+    echo "=== lsusb ==="
+    lsusb 2>/dev/null || true
+    echo "=== /dev/video ==="
+    ls -l /dev/video* 2>/dev/null || true
+    echo "=== v4l2 devices ==="
+    if command -v v4l2-ctl >/dev/null; then
+      v4l2-ctl --list-devices 2>&1
+    else
+      echo "v4l2-ctl missing"
+    fi
+    echo "=== rpicam cameras ==="
+    if command -v rpicam-vid >/dev/null; then
+      rpicam-vid --list-cameras 2>&1
+    else
+      echo "rpicam-vid missing"
+    fi
+    echo "=== recent camera usb/kernel messages ==="
+    dmesg 2>/dev/null | grep -Ei 'uvc|web camera|camera|usb 1-1|device descriptor|not accepting|enumerate' | tail -n 40 || true
+  } | tee "${OUT_DIR}/probe.log"
+
+  local has_usb_camera=1
+  local has_csi_camera=1
+  if lsusb 2>/dev/null | grep -Eiq 'camera|webcam|web camera|uvc|video'; then
+    has_usb_camera=0
+  fi
+  if command -v rpicam-vid >/dev/null &&
+      ! rpicam-vid --list-cameras 2>&1 | grep -Fq 'No cameras available'; then
+    has_csi_camera=0
+  fi
+  local rc=1
+  if [[ "${has_usb_camera}" -eq 0 || "${has_csi_camera}" -eq 0 ]]; then
+    rc=0
+  fi
+  if [[ "${rc}" -eq 0 ]]; then
+    echo "CAMERA_PROBE result=PASS usb_candidate=$((1 - has_usb_camera)) csi_candidate=$((1 - has_csi_camera))"
+  else
+    echo "CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0"
+  fi | tee -a "${OUT_DIR}/probe.log"
+  set -e
+  summarize_single camera-probe "${rc}"
+  return "${rc}"
 }
 
 run_model_only() {
@@ -293,6 +344,9 @@ case "${MODE}" in
   camera-real)
     run_camera_only real
     ;;
+  camera-probe)
+    run_camera_probe
+    ;;
   synthetic)
     run_pipeline synthetic
     ;;
@@ -303,7 +357,7 @@ case "${MODE}" in
     run_manager
     ;;
   *)
-    echo "usage: $0 {model|camera|camera-replay|camera-real|synthetic|replay|manager}" >&2
+    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager}" >&2
     exit 2
     ;;
 esac
