@@ -357,51 +357,103 @@ append_system_perf_state() {
   } >>"${OUT_DIR}/perf.log"
 }
 
+fps_ge() {
+  local actual="$1"
+  local minimum="$2"
+  [[ -n "${actual}" && "${actual}" != "NA" ]] || return 1
+  awk -v actual="${actual}" -v minimum="${minimum}" \
+    'BEGIN { exit !((actual + 0.0) >= (minimum + 0.0)) }'
+}
+
+record_perf_check() {
+  local kind="$1"
+  local name="$2"
+  local metric="$3"
+  local actual="$4"
+  local minimum="$5"
+  if fps_ge "${actual}" "${minimum}"; then
+    echo "PERF_CHECK kind=${kind} name=${name} metric=${metric} actual=${actual} min=${minimum} result=PASS" | tee -a "${OUT_DIR}/perf.log"
+    return 0
+  fi
+  echo "PERF_CHECK kind=${kind} name=${name} metric=${metric} actual=${actual:-NA} min=${minimum} result=FAIL" | tee -a "${OUT_DIR}/perf.log"
+  return 1
+}
+
 run_perf_model_case() {
   local name="$1"
-  shift
+  local min_fps="$2"
+  shift 2
   local frames="${PERF_MODEL_FRAMES:-60}"
-  echo "=== model ${name} ===" >>"${OUT_DIR}/perf.log"
-  set +e
-  env "$@" \
-    SUPERCOMBO_MAX_FRAMES="${frames}" \
-    RPI_SYNTHETIC=1 \
-    RPI_SYNTHETIC_FRAMES="${frames}" \
-    "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" \
-    >"${OUT_DIR}/perf_model_${name}.log" 2>&1
-  local rc=$?
-  set -e
-  tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}.log" | tail -n 12 >>"${OUT_DIR}/perf.log"
-  local fps
-  fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}.log" |
-    sed -n 's/.*rpi_modeld synthetic done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
-  echo "PERF model name=${name} rc=${rc} fps=${fps:-NA}" | tee -a "${OUT_DIR}/perf.log"
-  return "${rc}"
+  local attempts="${PERF_ATTEMPTS:-2}"
+  local attempt=1
+  while [[ "${attempt}" -le "${attempts}" ]]; do
+    echo "=== model ${name} attempt=${attempt} ===" >>"${OUT_DIR}/perf.log"
+    set +e
+    env "$@" \
+      SUPERCOMBO_MAX_FRAMES="${frames}" \
+      RPI_SYNTHETIC=1 \
+      RPI_SYNTHETIC_FRAMES="${frames}" \
+      "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" \
+      >"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" 2>&1
+    local rc=$?
+    set -e
+    tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" | tail -n 12 >>"${OUT_DIR}/perf.log"
+    local fps
+    fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" |
+      sed -n 's/.*rpi_modeld synthetic done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+    echo "PERF model name=${name} attempt=${attempt} rc=${rc} fps=${fps:-NA}" | tee -a "${OUT_DIR}/perf.log"
+    if [[ "${rc}" -eq 0 ]] && record_perf_check model "${name}" fps "${fps:-NA}" "${min_fps}"; then
+      return 0
+    fi
+    if [[ "${attempt}" -lt "${attempts}" ]]; then
+      echo "PERF_RETRY kind=model name=${name} next_attempt=$((attempt + 1))" | tee -a "${OUT_DIR}/perf.log"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 run_perf_manager_case() {
   local name="$1"
-  shift
+  local min_camera_fps="$2"
+  local min_model_fps="$3"
+  shift 3
   local seconds="${PERF_MANAGER_SEC:-5}"
-  echo "=== manager ${name} ===" >>"${OUT_DIR}/perf.log"
-  set +e
-  env "$@" \
-    RPI_CAMERA_SYNTHETIC="${RPI_CAMERA_SYNTHETIC:-1}" \
-    RPI_MANAGER_MAX_SEC="${seconds}" \
-    "${ROOT_DIR}/rpi_manager.py" "${MODEL_PARAM}" "${MODEL_BIN}" \
-    >"${OUT_DIR}/perf_manager_${name}.log" 2>&1
-  local rc=$?
-  set -e
-  tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" | tail -n 16 >>"${OUT_DIR}/perf.log"
-  local camera_fps model_fps overlay_frames
-  camera_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
-    sed -n 's/.*rpi_camerad done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
-  model_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
-    sed -n 's/.*rpi_modeld done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
-  overlay_frames="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
-    sed -n 's/.*rpi_overlay done frames=\([0-9]*\).*/\1/p' | tail -n 1)"
-  echo "PERF manager name=${name} rc=${rc} camera_fps=${camera_fps:-NA} model_fps=${model_fps:-NA} overlay_frames=${overlay_frames:-NA}" | tee -a "${OUT_DIR}/perf.log"
-  return "${rc}"
+  local attempts="${PERF_ATTEMPTS:-2}"
+  local attempt=1
+  while [[ "${attempt}" -le "${attempts}" ]]; do
+    echo "=== manager ${name} attempt=${attempt} ===" >>"${OUT_DIR}/perf.log"
+    set +e
+    env "$@" \
+      RPI_CAMERA_SYNTHETIC="${RPI_CAMERA_SYNTHETIC:-1}" \
+      RPI_MANAGER_MAX_SEC="${seconds}" \
+      "${ROOT_DIR}/rpi_manager.py" "${MODEL_PARAM}" "${MODEL_BIN}" \
+      >"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" 2>&1
+    local rc=$?
+    set -e
+    tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" | tail -n 16 >>"${OUT_DIR}/perf.log"
+    local camera_fps model_fps overlay_frames
+    camera_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
+      sed -n 's/.*rpi_camerad done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+    model_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
+      sed -n 's/.*rpi_modeld done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+    overlay_frames="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
+      sed -n 's/.*rpi_overlay done frames=\([0-9]*\).*/\1/p' | tail -n 1)"
+    echo "PERF manager name=${name} attempt=${attempt} rc=${rc} camera_fps=${camera_fps:-NA} model_fps=${model_fps:-NA} overlay_frames=${overlay_frames:-NA}" | tee -a "${OUT_DIR}/perf.log"
+    local check_rc=0
+    if [[ "${rc}" -eq 0 ]]; then
+      record_perf_check manager "${name}" camera_fps "${camera_fps:-NA}" "${min_camera_fps}" || check_rc=1
+      record_perf_check manager "${name}" model_fps "${model_fps:-NA}" "${min_model_fps}" || check_rc=1
+      if [[ "${check_rc}" -eq 0 ]]; then
+        return 0
+      fi
+    fi
+    if [[ "${attempt}" -lt "${attempts}" ]]; then
+      echo "PERF_RETRY kind=manager name=${name} next_attempt=$((attempt + 1))" | tee -a "${OUT_DIR}/perf.log"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 run_perf_snapshot() {
@@ -412,12 +464,12 @@ run_perf_snapshot() {
   append_system_perf_state
 
   local rc=0
-  run_perf_model_case default || rc=1
-  run_perf_model_case threads3 RPI_NCNN_THREADS=3 || rc=1
-  run_perf_model_case input_bf16 RPI_NCNN_INPUT_BF16=1 || rc=1
-  run_perf_manager_case no_overlay RPI_RUN_OVERLAY=0 || rc=1
-  run_perf_manager_case overlay_headless_2fps RPI_RUN_OVERLAY=1 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 || rc=1
-  run_perf_manager_case overlay_fb_2fps RPI_RUN_OVERLAY=1 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 || rc=1
+  run_perf_model_case default "${PERF_MIN_MODEL_FPS:-8}" || rc=1
+  run_perf_model_case threads3 "${PERF_MIN_THREADS3_FPS:-12}" RPI_NCNN_THREADS=3 || rc=1
+  run_perf_model_case input_bf16 "${PERF_MIN_INPUT_BF16_FPS:-15}" RPI_NCNN_INPUT_BF16=1 || rc=1
+  run_perf_manager_case no_overlay "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_MODEL_FPS:-12}" RPI_RUN_OVERLAY=0 || rc=1
+  run_perf_manager_case overlay_headless_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_MODEL_FPS:-12}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 || rc=1
+  run_perf_manager_case overlay_fb_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_FB_MODEL_FPS:-8}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 || rc=1
 
   summarize_single perf "${rc}"
   return "${rc}"

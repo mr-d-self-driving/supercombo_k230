@@ -117,6 +117,26 @@ It writes detailed logs to `/tmp/rpi_smoke/perf*.log` and prints `PERF ...`
 summary lines. Use `PERF_MODEL_FRAMES=120` or `PERF_MANAGER_SEC=10` for longer,
 less noisy measurements.
 
+`perf` also applies conservative pass/fail thresholds:
+
+```text
+PERF_MIN_MODEL_FPS=8
+PERF_MIN_THREADS3_FPS=12
+PERF_MIN_INPUT_BF16_FPS=15
+PERF_MIN_MANAGER_CAMERA_FPS=25
+PERF_MIN_MANAGER_MODEL_FPS=12
+PERF_MIN_MANAGER_FB_MODEL_FPS=8
+```
+
+Each check prints a `PERF_CHECK ... result=PASS|FAIL` line. Override the env
+vars above when doing stricter regression testing. Failed perf cases are retried
+once by default (`PERF_ATTEMPTS=2`) to avoid treating a single Pi scheduling
+outlier as a regression.
+
+The model-only default case is intentionally loose because it has shown larger
+standalone variance on this Pi. Treat the manager no-overlay and headless-overlay
+checks as the primary throughput gates.
+
 Pipeline smokes run `rpi_overlay` under `timeout` when GNU coreutils is
 available. Override the default 20 seconds with `OVERLAY_TIMEOUT_SEC=...`.
 
