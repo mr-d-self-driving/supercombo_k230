@@ -78,6 +78,14 @@ number_ge() {
     'BEGIN { exit !((actual + 0.0) >= (minimum + 0.0)) }'
 }
 
+number_le() {
+  local actual="$1"
+  local maximum="$2"
+  [[ -n "${actual}" && "${actual}" != "NA" ]] || return 1
+  awk -v actual="${actual}" -v maximum="${maximum}" \
+    'BEGIN { exit !((actual + 0.0) <= (maximum + 0.0)) }'
+}
+
 validate_component_log() {
   local component="$1"
   local path="$2"
@@ -166,6 +174,48 @@ emit_profile_metric() {
   return 0
 }
 
+validate_profile_latency_log() {
+  local path="$1"
+  local line
+  if ! line="$(last_log_line "${path}" 'rpi_modeld profile mode=')"; then
+    echo "PROFILE_CHECK result=FAIL reason=missing_profile log=${path}"
+    return 1
+  fi
+
+  local frames p95_total p95_infer min_frames max_p95_total max_p95_infer
+  frames="$(field_from_line "${line}" frames)"
+  p95_total="$(field_from_line "${line}" p95_total)"
+  p95_infer="$(field_from_line "${line}" p95_infer)"
+  min_frames="${PROFILE_MIN_MEASURED_FRAMES:-10}"
+  max_p95_total="${PROFILE_MAX_P95_TOTAL_MS:-150}"
+  max_p95_infer="${PROFILE_MAX_P95_INFER_MS:-140}"
+
+  local rc=0
+  if ! number_ge "${frames:-NA}" "${min_frames}"; then
+    echo "PROFILE_CHECK metric=frames actual=${frames:-NA} min=${min_frames} result=FAIL"
+    rc=1
+  else
+    echo "PROFILE_CHECK metric=frames actual=${frames:-NA} min=${min_frames} result=PASS"
+  fi
+  if [[ "${max_p95_total}" != "0" && "${max_p95_total}" != "0.0" ]]; then
+    if ! number_le "${p95_total:-NA}" "${max_p95_total}"; then
+      echo "PROFILE_CHECK metric=p95_total_ms actual=${p95_total:-NA} max=${max_p95_total} result=FAIL"
+      rc=1
+    else
+      echo "PROFILE_CHECK metric=p95_total_ms actual=${p95_total:-NA} max=${max_p95_total} result=PASS"
+    fi
+  fi
+  if [[ "${max_p95_infer}" != "0" && "${max_p95_infer}" != "0.0" ]]; then
+    if ! number_le "${p95_infer:-NA}" "${max_p95_infer}"; then
+      echo "PROFILE_CHECK metric=p95_infer_ms actual=${p95_infer:-NA} max=${max_p95_infer} result=FAIL"
+      rc=1
+    else
+      echo "PROFILE_CHECK metric=p95_infer_ms actual=${p95_infer:-NA} max=${max_p95_infer} result=PASS"
+    fi
+  fi
+  return "${rc}"
+}
+
 summarize_pipeline() {
   local source_mode="$1"
   local model_rc="$2"
@@ -244,6 +294,7 @@ summarize_single() {
     profile)
       print_matches profile "${OUT_DIR}/model.log" 'rpi_modeld (profile|synthetic done)'
       emit_profile_metric "${OUT_DIR}/model.log" || check_rc=1
+      validate_profile_latency_log "${OUT_DIR}/model.log" || check_rc=1
       validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
       ;;
     artifacts)
@@ -588,11 +639,13 @@ run_profile_snapshot() {
   require_executable rpi_modeld
   reset_outputs
   local frames="${PROFILE_MODEL_FRAMES:-40}"
+  local warmup="${RPI_PROFILE_WARMUP_FRAMES:-10}"
   set +e
   SUPERCOMBO_MAX_FRAMES="${frames}" \
     RPI_SYNTHETIC=1 \
     RPI_SYNTHETIC_FRAMES="${frames}" \
     RPI_PROFILE_MODEL=1 \
+    RPI_PROFILE_WARMUP_FRAMES="${warmup}" \
     "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" 2>&1 | tee "${OUT_DIR}/model.log"
   local rc=${PIPESTATUS[0]}
   set -e
@@ -831,6 +884,24 @@ fps_ge() {
     'BEGIN { exit !((actual + 0.0) >= (minimum + 0.0)) }'
 }
 
+ms_to_fps() {
+  local ms="$1"
+  [[ -n "${ms}" && "${ms}" != "NA" ]] || return 1
+  awk -v ms="${ms}" 'BEGIN {
+    if ((ms + 0.0) <= 0.0) exit 1
+    printf "%.2f", 1000.0 / (ms + 0.0)
+  }'
+}
+
+profile_steady_fps_from_log() {
+  local path="$1"
+  local line total
+  line="$(last_log_line "${path}" 'rpi_modeld profile mode=' 2>/dev/null || true)"
+  [[ -n "${line}" ]] || return 1
+  total="$(field_from_line "${line}" total)"
+  ms_to_fps "${total}"
+}
+
 record_perf_check() {
   local kind="$1"
   local name="$2"
@@ -850,6 +921,7 @@ run_perf_model_case() {
   local min_fps="$2"
   shift 2
   local frames="${PERF_MODEL_FRAMES:-60}"
+  local warmup="${PERF_MODEL_WARMUP_FRAMES:-${RPI_PROFILE_WARMUP_FRAMES:-10}}"
   local attempts="${PERF_ATTEMPTS:-2}"
   local attempt=1
   while [[ "${attempt}" -le "${attempts}" ]]; do
@@ -859,15 +931,18 @@ run_perf_model_case() {
       SUPERCOMBO_MAX_FRAMES="${frames}" \
       RPI_SYNTHETIC=1 \
       RPI_SYNTHETIC_FRAMES="${frames}" \
+      RPI_PROFILE_MODEL=1 \
+      RPI_PROFILE_WARMUP_FRAMES="${warmup}" \
       "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" \
       >"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" 2>&1
     local rc=$?
     set -e
     tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" | tail -n 12 >>"${OUT_DIR}/perf.log"
-    local fps
+    local fps steady_fps
     fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" |
       sed -n 's/.*rpi_modeld synthetic done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
-    echo "PERF model name=${name} attempt=${attempt} rc=${rc} fps=${fps:-NA}" | tee -a "${OUT_DIR}/perf.log"
+    steady_fps="$(profile_steady_fps_from_log "${OUT_DIR}/perf_model_${name}_attempt${attempt}.log" || true)"
+    echo "PERF model name=${name} attempt=${attempt} rc=${rc} fps=${fps:-NA} steady_fps=${steady_fps:-NA} warmup=${warmup}" | tee -a "${OUT_DIR}/perf.log"
     if [[ "${rc}" -eq 0 ]] && record_perf_check model "${name}" fps "${fps:-NA}" "${min_fps}"; then
       return 0
     fi
@@ -885,6 +960,7 @@ run_perf_manager_case() {
   local min_model_fps="$3"
   shift 3
   local seconds="${PERF_MANAGER_SEC:-5}"
+  local warmup="${PERF_MODEL_WARMUP_FRAMES:-${RPI_PROFILE_WARMUP_FRAMES:-10}}"
   local attempts="${PERF_ATTEMPTS:-2}"
   local attempt=1
   while [[ "${attempt}" -le "${attempts}" ]]; do
@@ -893,19 +969,22 @@ run_perf_manager_case() {
     env "$@" \
       RPI_CAMERA_SYNTHETIC="${RPI_CAMERA_SYNTHETIC:-1}" \
       RPI_MANAGER_MAX_SEC="${seconds}" \
+      RPI_PROFILE_MODEL=1 \
+      RPI_PROFILE_WARMUP_FRAMES="${warmup}" \
       "${ROOT_DIR}/rpi_manager.py" "${MODEL_PARAM}" "${MODEL_BIN}" \
       >"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" 2>&1
     local rc=$?
     set -e
     tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" | tail -n 16 >>"${OUT_DIR}/perf.log"
-    local camera_fps model_fps overlay_frames
+    local camera_fps model_fps steady_fps overlay_frames
     camera_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
       sed -n 's/.*rpi_camerad done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
     model_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
       sed -n 's/.*rpi_modeld done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+    steady_fps="$(profile_steady_fps_from_log "${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" || true)"
     overlay_frames="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}_attempt${attempt}.log" |
       sed -n 's/.*rpi_overlay done frames=\([0-9]*\).*/\1/p' | tail -n 1)"
-    echo "PERF manager name=${name} attempt=${attempt} rc=${rc} camera_fps=${camera_fps:-NA} model_fps=${model_fps:-NA} overlay_frames=${overlay_frames:-NA}" | tee -a "${OUT_DIR}/perf.log"
+    echo "PERF manager name=${name} attempt=${attempt} rc=${rc} camera_fps=${camera_fps:-NA} model_fps=${model_fps:-NA} model_steady_fps=${steady_fps:-NA} overlay_frames=${overlay_frames:-NA} warmup=${warmup}" | tee -a "${OUT_DIR}/perf.log"
     local check_rc=0
     if [[ "${rc}" -eq 0 ]]; then
       record_perf_check manager "${name}" camera_fps "${camera_fps:-NA}" "${min_camera_fps}" || check_rc=1
@@ -1018,6 +1097,8 @@ append_check_step_summary() {
       profile)
         if [[ -f "${step_dir}/model.log" ]]; then
           emit_profile_metric "${step_dir}/model.log" |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+          validate_profile_latency_log "${step_dir}/model.log" |
             sed "s/^/CHECK_DETAIL step=${name} /" || true
         fi
         check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='

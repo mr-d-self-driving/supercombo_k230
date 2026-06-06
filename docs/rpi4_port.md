@@ -173,10 +173,21 @@ PROFILE_METRIC mode=synthetic frames=40 warmup=0 total_ms=... warp_ms=... input_
 ```
 
 Use `PROFILE_MODEL_FRAMES=...` for longer samples, or `CHECK_WITH_PROFILE=1`
-to include the same timing breakdown in `scripts/rpi_smoke.sh check`. Set
-`RPI_PROFILE_WARMUP_FRAMES=N` to process but exclude the first `N` frames from
-the reported average/p95/max, which is useful when separating cold-start spikes
+to include the same timing breakdown in `scripts/rpi_smoke.sh check`. `profile`
+uses `RPI_PROFILE_WARMUP_FRAMES=10` by default, which processes but excludes the
+first `10` frames from the reported average/p95/max. Set
+`RPI_PROFILE_WARMUP_FRAMES=N` to override it when separating cold-start spikes
 from steady-state inference.
+
+`profile` also acts as a latency gate:
+
+```text
+PROFILE_MIN_MEASURED_FRAMES=10
+PROFILE_MAX_P95_TOTAL_MS=150
+PROFILE_MAX_P95_INFER_MS=140
+```
+
+Set either max threshold to `0` to report the metric without failing on it.
 
 `parity` runs the deterministic contract checks that do not require a camera or
 ncnn inference:
@@ -219,8 +230,11 @@ manager overlay_fb_2fps
 ```
 
 It writes detailed logs to `/tmp/rpi_smoke/perf*.log` and prints `PERF ...`
-summary lines. Use `PERF_MODEL_FRAMES=120` or `PERF_MANAGER_SEC=10` for longer,
-less noisy measurements.
+summary lines. Model cases also enable `RPI_PROFILE_MODEL=1` and report
+`steady_fps` from the profile average after excluding the first
+`PERF_MODEL_WARMUP_FRAMES` frames. The default warmup is `10`, or
+`RPI_PROFILE_WARMUP_FRAMES` when set. Use `PERF_MODEL_FRAMES=120` or
+`PERF_MANAGER_SEC=10` for longer, less noisy measurements.
 Run `check` and `perf` sequentially. The Pi is CPU-bound enough that running
 them at the same time can make short smoke windows miss `modelState` updates and
 produce misleading failures.
@@ -502,6 +516,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | short `scripts/rpi_smoke.sh check` with percentile profile | artifacts/parity/profile `PASS`, camera `39.10 fps`, camera-file `99.41 fps`, synthetic pipeline camera/model `29.72 / 11.05 fps`, manager camera/model `29.57 / 14.60 fps`, profile p95 total/infer `78.87 / 68.28 ms`, max total/infer `99.10 / 96.20 ms` |
 | profile warmup comparison, 50 frames | warmup `0`: measured `50` frames, avg total/infer `91.68 / 88.57 ms`, p95 total/infer `323.03 / 319.99 ms`; warmup `10`: measured `40` frames, avg total/infer `56.79 / 54.14 ms`, p95 total/infer `55.83 / 53.19 ms`; both throttled `0x0`, `rpi_modeld` sha256 `8e2758f7c1b2eac4832e3f8be3ff7693335767e488feeb4b1fd4c6392d90a242` |
 | short `scripts/rpi_smoke.sh check` with `RPI_PROFILE_WARMUP_FRAMES=5` | artifacts/parity/profile `PASS`, camera `39.36 fps`, camera-file `61.51 fps`, synthetic pipeline camera/model `30.43 / 7.52 fps`, manager camera/model `29.46 / 12.89 fps`, profile measured `15` frames after warmup `5`, p95 total/infer `77.04 / 74.10 ms` |
+| profile latency gate, 40 frames | default warmup `10`, measured `30` frames, avg total/infer `71.73 / 68.35 ms`, p95 total/infer `77.46 / 74.19 ms`; `PROFILE_CHECK` frames/p95 total/p95 infer all `PASS`, throttled `0x0` |
+| `perf` with steady FPS, 60 frames / 4 sec | model default raw/steady `11.24 / 11.34 fps`, threads3 `12.96 / 13.96 fps`, input_bf16 `15.42 / 18.56 fps`; manager no_overlay camera/model/steady `29.32 / 18.46 / 18.41 fps`, headless overlay `29.26 / 16.32 / 16.23 fps`, fb overlay `29.10 / 15.61 / 15.55 fps`; all default `PERF_CHECK` gates `PASS`, throttled `0x0` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
