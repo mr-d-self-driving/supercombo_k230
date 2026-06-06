@@ -23,6 +23,7 @@ reset_outputs() {
         "${OUT_DIR}/model.log" \
         "${OUT_DIR}/overlay.log" \
         "${OUT_DIR}/manager.log" \
+        "${OUT_DIR}/dump_verify.log" \
         "${OUT_DIR}/overlay.ppm"
 }
 
@@ -43,8 +44,9 @@ summarize_pipeline() {
   local model_rc="$2"
   local overlay_rc="$3"
   local overlay_dump="$4"
+  local dump_rc="$5"
   local result="PASS"
-  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 ]]; then
+  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 ]]; then
     result="FAIL"
   fi
   print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
@@ -57,7 +59,46 @@ summarize_pipeline() {
       echo "dump missing: ${overlay_dump}"
     fi
   fi
-  echo "SMOKE result=${result} mode=${source_mode} model_rc=${model_rc} overlay_rc=${overlay_rc} dump=${overlay_dump:-none} logs=${OUT_DIR}"
+  echo "SMOKE result=${result} mode=${source_mode} model_rc=${model_rc} overlay_rc=${overlay_rc} dump_rc=${dump_rc} dump=${overlay_dump:-none} logs=${OUT_DIR}"
+}
+
+verify_ppm_dump() {
+  local path="$1"
+  if [[ "${VERIFY_DUMP:-1}" == "0" || -z "${path}" ]]; then
+    return 0
+  fi
+  python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    print(f"dump verify failed: missing {path}")
+    raise SystemExit(1)
+
+data = path.read_bytes()
+parts = data.split(b"\n", 3)
+if len(parts) != 4 or parts[0] != b"P6":
+    print(f"dump verify failed: bad PPM header {path}")
+    raise SystemExit(1)
+try:
+    width, height = map(int, parts[1].split())
+    max_value = int(parts[2])
+except Exception:
+    print(f"dump verify failed: bad PPM metadata {path}")
+    raise SystemExit(1)
+pixels = parts[3]
+expected = width * height * 3
+if max_value != 255 or width <= 0 or height <= 0 or len(pixels) != expected:
+    print(f"dump verify failed: size mismatch {path} {width}x{height} bytes={len(pixels)} expected={expected}")
+    raise SystemExit(1)
+mn = min(pixels)
+mx = max(pixels)
+mean = sum(pixels) / len(pixels)
+print(f"dump verify ok: {path} {width}x{height} mean={mean:.2f} min={mn} max={mx}")
+if mx - mn < 8 or mean < 1.0:
+    raise SystemExit(1)
+PY
 }
 
 summarize_single() {
@@ -73,6 +114,9 @@ summarize_single() {
       ;;
     camera)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
+      ;;
+    camera-replay|camera-real)
+      print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done|error)'
       ;;
     manager)
       print_matches manager "${OUT_DIR}/manager.log" 'rpi_(manager|camerad|modeld|overlay).*'
@@ -118,13 +162,24 @@ run_model_only() {
 }
 
 run_camera_only() {
+  local source_mode="$1"
+  local summary_mode="camera"
+  if [[ "${source_mode}" == "replay" ]]; then
+    summary_mode="camera-replay"
+  elif [[ "${source_mode}" == "real" ]]; then
+    summary_mode="camera-real"
+  fi
   reset_outputs
   cleanup_shm
   set +e
-  if [[ "${CAMERA_SOURCE_MODE:-synthetic}" == "replay" ]]; then
+  if [[ "${source_mode}" == "replay" ]]; then
     require_file "${REPLAY_NV12}"
     SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
       RPI_CAMERA_REPLAY_NV12="${REPLAY_NV12}" \
+      RPI_CAMERA_FPS="${CAMERA_FPS}" \
+      "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
+  elif [[ "${source_mode}" == "real" ]]; then
+    SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
       RPI_CAMERA_FPS="${CAMERA_FPS}" \
       "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
   else
@@ -135,7 +190,7 @@ run_camera_only() {
   fi
   local rc=${PIPESTATUS[0]}
   set -e
-  summarize_single camera "${rc}"
+  summarize_single "${summary_mode}" "${rc}"
   return "${rc}"
 }
 
@@ -189,13 +244,21 @@ run_pipeline() {
 
   wait "${model_pid}"
   model_rc=$?
+  dump_rc=0
+  if [[ -n "${overlay_dump}" ]]; then
+    verify_ppm_dump "${overlay_dump}" >"${OUT_DIR}/dump_verify.log" 2>&1
+    dump_rc=$?
+  fi
   set -e
   kill "${cam_pid}" 2>/dev/null || true
   wait "${cam_pid}" 2>/dev/null || true
   trap - EXIT
 
-  summarize_pipeline "${source_mode}" "${model_rc}" "${overlay_rc}" "${overlay_dump}"
-  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 ]]; then
+  if [[ -f "${OUT_DIR}/dump_verify.log" ]]; then
+    cat "${OUT_DIR}/dump_verify.log"
+  fi
+  summarize_pipeline "${source_mode}" "${model_rc}" "${overlay_rc}" "${overlay_dump}" "${dump_rc}"
+  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 ]]; then
     return 1
   fi
   return 0
@@ -222,7 +285,13 @@ case "${MODE}" in
     run_model_only
     ;;
   camera)
-    run_camera_only
+    run_camera_only synthetic
+    ;;
+  camera-replay)
+    run_camera_only replay
+    ;;
+  camera-real)
+    run_camera_only real
     ;;
   synthetic)
     run_pipeline synthetic
@@ -234,7 +303,7 @@ case "${MODE}" in
     run_manager
     ;;
   *)
-    echo "usage: $0 {model|camera|synthetic|replay|manager}" >&2
+    echo "usage: $0 {model|camera|camera-replay|camera-real|synthetic|replay|manager}" >&2
     exit 2
     ;;
 esac

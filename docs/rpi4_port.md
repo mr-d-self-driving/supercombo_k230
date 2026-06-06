@@ -87,6 +87,8 @@ The common smoke commands are wrapped in:
 ```sh
 scripts/rpi_smoke.sh model
 scripts/rpi_smoke.sh camera
+scripts/rpi_smoke.sh camera-replay
+RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
 scripts/rpi_smoke.sh synthetic
 scripts/rpi_smoke.sh replay
 scripts/rpi_smoke.sh manager
@@ -235,6 +237,7 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | short replay render with `RPI_OVERLAY_DUMP` | PPM dump generated, nonblank RGB means `[76.70, 98.13, 100.02]` |
 | `scripts/rpi_smoke.sh replay` without dump | camera `29.36 fps`, model `17.36 fps`, overlay `~10 fps`, errors `0` |
 | `DUMP=1 scripts/rpi_smoke.sh replay` short smoke | `overlay.ppm` generated, errors `0` |
+| `DUMP=1 scripts/rpi_smoke.sh replay` with dump verification | PPM `480x320`, mean `94.44`, min `0`, max `255`, errors `0` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 
@@ -288,3 +291,27 @@ unable to enumerate USB device
 
 So the current code path is ready for V4L2/OpenCV camera input, but the attached USB camera
 or hub state must be fixed before real-camera smoke can pass.
+
+Latest probe on the Pi:
+
+```text
+lsusb: only Linux root hub and VIA hub are listed
+rpicam-vid --list-cameras: No cameras available
+vcgencmd get_camera: supported=0 detected=0, libcamera interfaces=0
+```
+
+Kernel log still shows the original UVC failure path:
+
+```text
+Found UVC 1.00 device Web Camera (1d6c:1278)
+Failed to query UVC control ... -110
+device descriptor read/64, error -32
+device not accepting address ..., error -71
+unable to enumerate USB device
+```
+
+Once a camera is visible again, run:
+
+```sh
+RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
+```
