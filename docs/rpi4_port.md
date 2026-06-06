@@ -490,6 +490,10 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `performance` governor, manager no-overlay 8 sec | camera `29.11 fps`, model `18.33 fps`, temp rose to `71.5C`; restored to `ondemand` |
 | post-parity-refactor `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | default model retry `18.02 fps`, threads3 `15.45 fps`, input BF16 `18.69 fps`, no-overlay manager camera `29.16 fps` / model `18.19 fps`, headless overlay model `14.97 fps`, fb overlay model `16.90 fps`; all checks `PASS` |
 | post-ncnn-contract `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | default model retry `8.18 fps` after a cold outlier, threads3 `16.24 fps`, input BF16 `19.07 fps`, no-overlay manager camera `29.13 fps` / model `18.22 fps`, headless overlay model `17.11 fps`, fb overlay model `15.27 fps`; all checks `PASS` |
+| post-camera-bound `scripts/rpi_smoke.sh perf`, 60 model frames / 6 sec manager | default model `10.84 fps`, threads3 `14.79 fps`, input BF16 `17.86 fps`, no-overlay manager camera `29.22 fps` / model `18.50 fps`, headless overlay model `17.41 fps`, fb overlay model `13.22 fps`; all checks `PASS`, throttled `0x0` |
+| post-camera-bound model-only sweep, 120 frames | default float input `10.97 fps`, `RPI_NCNN_INPUT_BF16=1` `18.45 fps`, `RPI_NCNN_THREADS=3` `16.62 fps`, `RPI_NCNN_THREADS=3 RPI_NCNN_INPUT_BF16=1` `16.57 fps`, throttled `0x0` |
+| post-camera-bound manager no-overlay comparison, 8 sec | default float input camera/model `28.94 / 13.00 fps`; `RPI_NCNN_INPUT_BF16=1` camera/model `29.17 / 14.88 fps`, throttled `0x0` |
+| follow-up 120-frame profile, explicit input mode comparison | `RPI_NCNN_INPUT_BF16=1`: `12.30 fps`, avg total `80.61 ms`, infer `76.29 ms`; `RPI_NCNN_INPUT_BF16=0`: `18.45 fps`, avg total `53.79 ms`, infer `51.10 ms`; throttled `0x0` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -523,7 +527,11 @@ Quick ncnn option sweep, 50 synthetic frames:
 | `threads=4`, `RPI_NCNN_BF16=0`, `RPI_NCNN_INPUT_BF16=0` | `9.18` |
 
 Longer 120-frame confirmation was `19.41 fps` with BF16 input conversion and
-`19.53 fps` without it, so the default now skips input BF16 conversion.
+`19.53 fps` without it, so the default skips input BF16 conversion. Later
+post-camera-bound FPS-only sweeps were mixed, but the follow-up profile still
+favored float input: `RPI_NCNN_INPUT_BF16=0` averaged `53.79 ms/frame`, while
+`RPI_NCNN_INPUT_BF16=1` averaged `80.61 ms/frame`. Keep `RPI_NCNN_INPUT_BF16=1`
+as a perf comparison option, not the default.
 
 ## Current Real Camera Status
 

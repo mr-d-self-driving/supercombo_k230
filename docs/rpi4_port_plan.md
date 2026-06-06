@@ -299,8 +299,8 @@ headless/no-overlay.
 - The exact `ncnnoptimize` invocation for the current deploy pair must be
   recorded before a clean rebuild can be considered reproducible.
 - BF16 input conversion has shown mixed results between artifact-level and
-  repo-level smokes, so both default and `RPI_NCNN_INPUT_BF16=1` should remain
-  in performance checks until the result is stable.
+  repo-level smokes, so both default float input and `RPI_NCNN_INPUT_BF16=1`
+  should remain in performance checks until the result is stable.
 
 ## Done Criteria
 
