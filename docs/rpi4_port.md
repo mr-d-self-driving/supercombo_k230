@@ -394,6 +394,10 @@ Camera input modes:
 RPI_CAMERA_SOURCE=/dev/video0 ./rpi_camerad
 RPI_CAMERA_SOURCE=/path/to/video.mp4 ./rpi_camerad
 
+# Raspberry Pi CSI/libcamera source through rpicam-vid YUV420 stdout
+RPI_CAMERA_SOURCE=rpicam ./rpi_camerad
+# Aliases: RPI_CAMERA_SOURCE=libcamera or RPI_CAMERA_SOURCE=csi
+
 # Synthetic 512x256 NV12 smoke source
 RPI_CAMERA_SYNTHETIC=1 ./rpi_camerad
 
@@ -552,7 +556,9 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | latest short `CHECK_WITH_PROFILE=1 scripts/rpi_smoke.sh check` | artifacts/parity/profile `PASS`; synthetic camera/model `29.93 / 13.77 fps`; manager camera/model `29.18 / 14.09 fps`; replay camera/model `29.68 / 14.92 fps`; profile p95 total/infer `65.12 / 62.40 ms`; replay and synthetic PPM dumps nonblank |
 | latest `scripts/rpi_smoke.sh perf`, 60 model frames / 4 sec manager | default model `11.13 fps`, threads3 `12.82 fps`, input_bf16 `18.09 fps`; manager no_overlay camera/model `29.17 / 17.37 fps`, headless overlay `29.14 / 17.02 fps`, fb overlay `29.34 / 16.60 fps`; all `PERF_CHECK` gates `PASS` |
 | `compare-input`, replay 20 frames | `RPI_NCNN_INPUT_BF16=1` is not accuracy-compatible with float input: raw mean/max abs `1.229 / 62.0`, plan mean/end L2 `17.08 / 44.23`, lane y mean/max abs `2.158 / 25.047`, road-edge y mean/max abs `7.014 / 33.938`, best-plan mismatch `7/20`; recommendation `float` |
-| latest `scripts/rpi_smoke.sh camera-probe` | `CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0`; only Raspberry Pi codec/ISP helper `/dev/video*` nodes were visible; UVC camera failed USB enumeration with descriptor read errors `-32` and address errors `-71` |
+| latest camera-source regression after rpicam source addition | synthetic `30.76 fps`, replay `30.57 fps`; both `FRAME_METADATA result=PASS`; camera-file path previously remained valid at `94.46 fps` |
+| latest `scripts/rpi_smoke.sh camera-probe` | `CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0 rpicam_candidates=0`; only Raspberry Pi codec/ISP helper `/dev/video*` nodes were visible; UVC camera failed USB enumeration with descriptor read errors `-32` and address errors `-71`; `rpicam-vid --list-cameras` reported no CSI/libcamera cameras |
+| forced `RPI_CAMERA_SOURCE=csi scripts/rpi_smoke.sh camera-real` with no CSI camera | bounded failure after `RPI_CAMERA_MAX_READ_ERRORS=2`; `rpicam-vid` reported `no cameras available`, frames `0`, errors `2` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -621,7 +627,8 @@ Latest probe on the Pi:
 lsusb: only Linux root hub and VIA hub are listed
 rpicam-vid --list-cameras: No cameras available
 CAMERA_PROBE_V4L2 candidates=0
-CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0
+CAMERA_PROBE_RPICAM candidates=0 reason=no_camera
+CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0 rpicam_candidates=0
 ```
 
 The visible `/dev/video*` nodes are Raspberry Pi codec/ISP/helper nodes. Some of
@@ -655,8 +662,12 @@ helper nodes can expose `Video Capture` capabilities but are reported as
 `candidate=0 reason=platform_or_helper_capture`, so do not use those as the live
 camera source for this OpenCV path.
 `camera-real` now uses the first `candidate=1` V4L2 node automatically when
-`RPI_CAMERA_SOURCE` is not set. Set `RPI_CAMERA_SOURCE=/dev/videoX` only when
-you want to override the probe result.
+`RPI_CAMERA_SOURCE` is not set. If `camera-probe` sees a CSI/libcamera camera
+through `rpicam-vid --list-cameras`, `camera-real` selects
+`RPI_CAMERA_SOURCE=rpicam` and `rpi_camerad` ingests `rpicam-vid --codec yuv420`
+stdout into the same `512x256 NV12` shared ring. Set
+`RPI_CAMERA_SOURCE=/dev/videoX` or `RPI_CAMERA_SOURCE=rpicam` only when you want
+to override the probe result.
 Live camera reads are bounded so a helper node that opens but never produces
 frames cannot hang the smoke run forever. `rpi_camerad` stops after
 `RPI_CAMERA_MAX_READ_ERRORS=90` consecutive failed reads by default, and

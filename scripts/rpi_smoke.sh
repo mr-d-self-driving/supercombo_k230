@@ -602,6 +602,38 @@ first_probe_candidate() {
   ' "${path}"
 }
 
+rpicam_candidate_count_from_text() {
+  awk '/^[[:space:]]*[0-9]+[[:space:]]*:/ { count++ } END { print count + 0 }'
+}
+
+probe_rpicam_cameras() {
+  if ! command -v rpicam-vid >/dev/null; then
+    echo "rpicam-vid missing"
+    echo "CAMERA_PROBE_RPICAM candidates=0 reason=missing_tool"
+    return 0
+  fi
+
+  local output count
+  output="$(rpicam-vid --list-cameras 2>&1 || true)"
+  printf '%s\n' "${output}"
+  count="$(rpicam_candidate_count_from_text <<<"${output}")"
+  if [[ "${count}" -gt 0 ]]; then
+    echo "CAMERA_PROBE_RPICAM candidates=${count} source=rpicam"
+  else
+    echo "CAMERA_PROBE_RPICAM candidates=0 reason=no_camera"
+  fi
+}
+
+first_rpicam_candidate() {
+  local path="$1"
+  [[ -f "${path}" ]] || return 1
+  if grep -Eq '^CAMERA_PROBE_RPICAM candidates=[1-9][0-9]*' "${path}"; then
+    printf '%s\n' "rpicam"
+    return 0
+  fi
+  return 1
+}
+
 select_camera_source() {
   if [[ -n "${RPI_CAMERA_SOURCE:-}" ]]; then
     printf '%s\n' "${RPI_CAMERA_SOURCE}"
@@ -617,6 +649,10 @@ select_camera_source() {
   probe_v4l2_nodes >>"${OUT_DIR}/probe.log"
   local source
   source="$(first_probe_candidate "${OUT_DIR}/probe.log")"
+  if [[ -z "${source}" ]]; then
+    probe_rpicam_cameras >>"${OUT_DIR}/probe.log"
+    source="$(first_rpicam_candidate "${OUT_DIR}/probe.log")"
+  fi
   if [[ -z "${source}" ]]; then
     echo "CAMERA_AUTO_SOURCE result=FAIL reason=no_candidate log=${OUT_DIR}/probe.log" >>"${OUT_DIR}/probe.log"
     return 1
@@ -643,11 +679,7 @@ run_camera_probe() {
       echo "v4l2-ctl missing"
     fi
     echo "=== rpicam cameras ==="
-    if command -v rpicam-vid >/dev/null; then
-      rpicam-vid --list-cameras 2>&1
-    else
-      echo "rpicam-vid missing"
-    fi
+    probe_rpicam_cameras
     echo "=== recent camera usb/kernel messages ==="
     dmesg 2>/dev/null | grep -Ei 'uvc|web camera|camera|usb 1-1|device descriptor|not accepting|enumerate' | tail -n 40 || true
   } | tee "${OUT_DIR}/probe.log"
@@ -655,14 +687,16 @@ run_camera_probe() {
   local has_usb_camera=1
   local has_csi_camera=1
   local v4l2_candidates=0
+  local rpicam_candidates=0
   if lsusb 2>/dev/null | grep -Eiq 'camera|webcam|web camera|uvc|video'; then
     has_usb_camera=0
   fi
   if command -v v4l2-ctl >/dev/null; then
     v4l2_candidates="$(grep -Ec '^CAMERA_PROBE_NODE .*candidate=1' "${OUT_DIR}/probe.log" 2>/dev/null || true)"
   fi
-  if command -v rpicam-vid >/dev/null &&
-      ! rpicam-vid --list-cameras 2>&1 | grep -Fq 'No cameras available'; then
+  rpicam_candidates="$(sed -n 's/^CAMERA_PROBE_RPICAM candidates=\([0-9][0-9]*\).*/\1/p' "${OUT_DIR}/probe.log" | tail -n 1)"
+  rpicam_candidates="${rpicam_candidates:-0}"
+  if [[ "${rpicam_candidates}" -gt 0 ]]; then
     has_csi_camera=0
   fi
   local rc=1
@@ -670,9 +704,9 @@ run_camera_probe() {
     rc=0
   fi
   if [[ "${rc}" -eq 0 ]]; then
-    echo "CAMERA_PROBE result=PASS usb_candidate=$((1 - has_usb_camera)) csi_candidate=$((1 - has_csi_camera)) v4l2_candidates=${v4l2_candidates}"
+    echo "CAMERA_PROBE result=PASS usb_candidate=$((1 - has_usb_camera)) csi_candidate=$((1 - has_csi_camera)) v4l2_candidates=${v4l2_candidates} rpicam_candidates=${rpicam_candidates}"
   else
-    echo "CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=${v4l2_candidates}"
+    echo "CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=${v4l2_candidates} rpicam_candidates=${rpicam_candidates}"
   fi | tee -a "${OUT_DIR}/probe.log"
   set -e
   summarize_single camera-probe "${rc}"
@@ -1250,7 +1284,7 @@ append_check_step_summary() {
       camera_probe)
         if [[ -f "${step_dir}/probe.log" ]]; then
           tr '\r' '\n' <"${step_dir}/probe.log" |
-            grep -E '^CAMERA_PROBE(_V4L2)? |^CAMERA_PROBE_NODE .*candidate=1' |
+            grep -E '^CAMERA_PROBE(_V4L2|_RPICAM)? |^CAMERA_PROBE_NODE .*candidate=1' |
             sed "s/^/CHECK_DETAIL step=${name} /" || true
         fi
         ;;

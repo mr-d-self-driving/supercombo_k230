@@ -18,6 +18,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -122,6 +123,73 @@ private:
     std::streampos data_offset_ = 0;
 };
 
+class RpicamYuv420Reader {
+public:
+    RpicamYuv420Reader(int width, int height, int fps)
+        : width_(width),
+          height_(height),
+          y_size_(static_cast<size_t>(width_) * height_),
+          uv_size_(y_size_ / 4),
+          yuv420_(y_size_ + uv_size_ * 2)
+    {
+        const char *custom = std::getenv("RPI_RPICAM_COMMAND");
+        if (custom && custom[0] != '\0') {
+            command_ = custom;
+        } else {
+            std::ostringstream cmd;
+            cmd << "rpicam-vid -n --codec yuv420 --timeout 0 --flush "
+                << "--width " << width_ << " --height " << height_
+                << " --framerate " << fps << " --output -";
+            command_ = cmd.str();
+        }
+        pipe_ = popen(command_.c_str(), "r");
+        if (!pipe_)
+            throw std::runtime_error("open rpicam pipe failed: " + command_);
+    }
+
+    ~RpicamYuv420Reader()
+    {
+        if (pipe_) {
+            pclose(pipe_);
+            pipe_ = nullptr;
+        }
+    }
+
+    bool read(std::vector<uint8_t> &nv12)
+    {
+        size_t offset = 0;
+        while (offset < yuv420_.size()) {
+            const size_t got = std::fread(yuv420_.data() + offset, 1,
+                                          yuv420_.size() - offset, pipe_);
+            if (got == 0)
+                return false;
+            offset += got;
+        }
+
+        nv12.resize(y_size_ + uv_size_ * 2);
+        std::memcpy(nv12.data(), yuv420_.data(), y_size_);
+        const uint8_t *u = yuv420_.data() + y_size_;
+        const uint8_t *v = u + uv_size_;
+        uint8_t *uv = nv12.data() + y_size_;
+        for (size_t i = 0; i < uv_size_; ++i) {
+            uv[i * 2 + 0] = u[i];
+            uv[i * 2 + 1] = v[i];
+        }
+        return true;
+    }
+
+    const std::string &command() const { return command_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+    size_t y_size_ = 0;
+    size_t uv_size_ = 0;
+    std::vector<uint8_t> yuv420_;
+    std::string command_;
+    FILE *pipe_ = nullptr;
+};
+
 cv::Rect center_crop_2to1(const cv::Mat &frame)
 {
     int crop_w = frame.cols;
@@ -200,17 +268,28 @@ int main(int argc, char *argv[])
         const bool replay = !replay_path.empty();
         const bool replay_loop = replay && env_enabled_local("RPI_CAMERA_REPLAY_LOOP", false);
         const bool synthetic = !replay && env_enabled_local("RPI_CAMERA_SYNTHETIC", false);
+        const std::string source = camera_source();
+        const bool rpicam = !synthetic && !replay &&
+            (source == "rpicam" || source == "libcamera" || source == "csi" ||
+             env_enabled_local("RPI_CAMERA_RPICAM", false));
         std::string live_source_kind = "camera";
         cv::VideoCapture cap;
         std::unique_ptr<ReplayNv12Reader> replay_reader;
+        std::unique_ptr<RpicamYuv420Reader> rpicam_reader;
         if (replay)
             replay_reader.reset(new ReplayNv12Reader(replay_path));
-        int request_w = env_int_local("RPI_CAMERA_CAPTURE_W", 1280);
-        int request_h = env_int_local("RPI_CAMERA_CAPTURE_H", 720);
+        int request_w = env_int_local("RPI_CAMERA_CAPTURE_W", rpicam ? kK230AiWidth : 1280);
+        int request_h = env_int_local("RPI_CAMERA_CAPTURE_H", rpicam ? kK230AiHeight : 720);
         const int request_fps = env_int_local("RPI_CAMERA_FPS", 30);
         const int max_read_errors = env_int_local("RPI_CAMERA_MAX_READ_ERRORS", 90);
-        if (!synthetic && !replay) {
-            const std::string source = camera_source();
+        if (rpicam) {
+            if (request_w != static_cast<int>(kK230AiWidth) ||
+                request_h != static_cast<int>(kK230AiHeight)) {
+                throw std::runtime_error("rpicam source requires 512x256 capture for direct YUV420 ingest");
+            }
+            live_source_kind = "rpicam";
+            rpicam_reader.reset(new RpicamYuv420Reader(request_w, request_h, request_fps));
+        } else if (!synthetic && !replay) {
             std::string source_desc;
             if (!source.empty()) {
                 const bool is_device = source.find("/dev/video") == 0;
@@ -243,6 +322,8 @@ int main(int argc, char *argv[])
                      frame_ring.slot_count());
         if (replay)
             std::fprintf(stderr, " replay=%s frames=%u", replay_path.c_str(), replay_reader->frame_count());
+        if (rpicam)
+            std::fprintf(stderr, " command=%s", rpicam_reader->command().c_str());
         std::fprintf(stderr, "\n");
 
         uint64_t frame_id = 0;
@@ -268,6 +349,23 @@ int main(int argc, char *argv[])
                 crop = cv::Rect(0, 0, kK230AiWidth, kK230AiHeight);
             } else if (synthetic) {
                 fill_synthetic_nv12(nv12, frame_id);
+                crop = cv::Rect(0, 0, kK230AiWidth, kK230AiHeight);
+            } else if (rpicam) {
+                if (!rpicam_reader->read(nv12)) {
+                    ++errors;
+                    ++consecutive_read_errors;
+                    if (max_read_errors > 0 &&
+                        consecutive_read_errors >= static_cast<unsigned>(max_read_errors)) {
+                        std::fprintf(stderr,
+                                     "\nrpi_camerad error: rpicam read failed %u consecutive times after frames=%llu "
+                                     "(run scripts/rpi_smoke.sh camera-probe; RPI_CAMERA_SOURCE=rpicam requires a visible CSI/libcamera camera)\n",
+                                     consecutive_read_errors,
+                                     static_cast<unsigned long long>(frame_id));
+                        break;
+                    }
+                    continue;
+                }
+                consecutive_read_errors = 0;
                 crop = cv::Rect(0, 0, kK230AiWidth, kK230AiHeight);
             } else {
                 if (!cap.read(bgr) || bgr.empty()) {
