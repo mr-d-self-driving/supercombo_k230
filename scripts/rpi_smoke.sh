@@ -209,7 +209,7 @@ summarize_single() {
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
-    camera-replay|camera-real)
+    camera-file|camera-replay|camera-real)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done|error)'
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
@@ -362,6 +362,30 @@ run_camera_probe() {
   return "${rc}"
 }
 
+can_make_camera_file_fixture() {
+  command -v ffmpeg >/dev/null && [[ -f "${REPLAY_NV12}" ]]
+}
+
+make_camera_file_fixture() {
+  require_file "${REPLAY_NV12}"
+  if ! command -v ffmpeg >/dev/null; then
+    echo "ffmpeg missing; cannot generate camera file fixture" >&2
+    return 2
+  fi
+  local path="${OUT_DIR}/camera_source.avi"
+  local frames="${CAMERA_FILE_FRAMES:-60}"
+  rm -f "${path}"
+  ffmpeg -hide_banner -loglevel error -y \
+    -f rawvideo -pix_fmt nv12 -s:v 512x256 -r "${CAMERA_FPS}" \
+    -skip_initial_bytes 20 -i "${REPLAY_NV12}" \
+    -frames:v "${frames}" -vf scale=1024:512 -c:v mjpeg -q:v 4 "${path}"
+  if [[ ! -s "${path}" ]]; then
+    echo "failed to create camera file fixture: ${path}" >&2
+    return 1
+  fi
+  echo "${path}"
+}
+
 run_model_only() {
   require_file "${MODEL_PARAM}"
   require_file "${MODEL_BIN}"
@@ -387,6 +411,8 @@ run_camera_only() {
   local summary_mode="camera"
   if [[ "${source_mode}" == "replay" ]]; then
     summary_mode="camera-replay"
+  elif [[ "${source_mode}" == "file" ]]; then
+    summary_mode="camera-file"
   elif [[ "${source_mode}" == "real" ]]; then
     summary_mode="camera-real"
   fi
@@ -398,6 +424,13 @@ run_camera_only() {
     require_file "${REPLAY_NV12}"
     SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
       RPI_CAMERA_REPLAY_NV12="${REPLAY_NV12}" \
+      RPI_CAMERA_FPS="${CAMERA_FPS}" \
+      "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
+  elif [[ "${source_mode}" == "file" ]]; then
+    local camera_file
+    camera_file="$(make_camera_file_fixture)"
+    SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
+      RPI_CAMERA_SOURCE="${camera_file}" \
       RPI_CAMERA_FPS="${CAMERA_FPS}" \
       "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
   elif [[ "${source_mode}" == "real" ]]; then
@@ -724,6 +757,12 @@ run_check_camera_replay() {
   run_camera_only replay
 }
 
+run_check_camera_file() {
+  CAMERA_FRAMES="${CHECK_CAMERA_FILE_FRAMES:-30}"
+  CAMERA_FILE_FRAMES="${CHECK_CAMERA_FILE_SOURCE_FRAMES:-60}"
+  run_camera_only file
+}
+
 run_check_synthetic() {
   CAMERA_FRAMES="${CHECK_SYNTHETIC_CAMERA_FRAMES:-120}"
   MODEL_FRAMES="${CHECK_SYNTHETIC_MODEL_FRAMES:-12}"
@@ -768,6 +807,15 @@ run_check_suite() {
   local rc=0
   run_check_step model run_check_model || rc=1
   run_check_step camera run_check_camera || rc=1
+  local include_camera_file="${CHECK_INCLUDE_CAMERA_FILE:-auto}"
+  if [[ "${include_camera_file}" == "1" || ( "${include_camera_file}" == "auto" && can_make_camera_file_fixture ) ]]; then
+    run_check_step camera_file run_check_camera_file || rc=1
+  elif [[ "${include_camera_file}" == "auto" || "${include_camera_file}" == "0" ]]; then
+    run_check_skip camera_file "missing_or_disabled_fixture"
+  else
+    echo "invalid CHECK_INCLUDE_CAMERA_FILE=${include_camera_file}; use auto, 0, or 1" >&2
+    rc=1
+  fi
   run_check_step synthetic run_check_synthetic || rc=1
   run_check_step manager run_check_manager || rc=1
 
@@ -808,6 +856,9 @@ case "${MODE}" in
   camera-replay)
     run_camera_only replay
     ;;
+  camera-file)
+    run_camera_only file
+    ;;
   camera-real)
     run_camera_only real
     ;;
@@ -830,7 +881,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {model|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac

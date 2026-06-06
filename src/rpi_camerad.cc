@@ -199,6 +199,7 @@ int main(int argc, char *argv[])
         const bool replay = !replay_path.empty();
         const bool replay_loop = replay && env_enabled_local("RPI_CAMERA_REPLAY_LOOP", false);
         const bool synthetic = !replay && env_enabled_local("RPI_CAMERA_SYNTHETIC", false);
+        std::string live_source_kind = "camera";
         cv::VideoCapture cap;
         std::unique_ptr<ReplayNv12Reader> replay_reader;
         if (replay)
@@ -212,6 +213,7 @@ int main(int argc, char *argv[])
             if (!source.empty()) {
                 const bool is_device = source.find("/dev/video") == 0;
                 cap.open(source, is_device ? cv::CAP_V4L2 : cv::CAP_ANY);
+                live_source_kind = is_device ? "camera" : "file";
                 source_desc = source;
             } else {
                 const int index = env_int_local("RPI_CAMERA_INDEX", 0);
@@ -233,7 +235,7 @@ int main(int argc, char *argv[])
 
         std::fprintf(stderr,
                      "rpi_camerad: source=%s capture=%dx%d@%d -> NV12 %ux%u shared_ring slots=%u",
-                     replay ? "replay" : (synthetic ? "synthetic" : "camera"),
+                     replay ? "replay" : (synthetic ? "synthetic" : live_source_kind.c_str()),
                      request_w, request_h, request_fps,
                      kK230AiWidth, kK230AiHeight,
                      frame_ring.slot_count());

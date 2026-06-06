@@ -96,6 +96,7 @@ The common smoke commands are wrapped in:
 scripts/rpi_smoke.sh model
 scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
+scripts/rpi_smoke.sh camera-file
 scripts/rpi_smoke.sh camera-replay
 RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
 scripts/rpi_smoke.sh synthetic
@@ -173,6 +174,7 @@ checks as the primary throughput gates.
 ```text
 model
 camera synthetic
+camera-file, if ffmpeg and REPLAY_NV12 are available
 synthetic pipeline with DUMP=1
 manager
 camera-replay, if REPLAY_NV12 exists
@@ -194,6 +196,9 @@ Useful bounds for shorter or longer checks:
 ```text
 CHECK_CAMERA_FRAMES=30
 CHECK_MODEL_FRAMES=20
+CHECK_INCLUDE_CAMERA_FILE=auto
+CHECK_CAMERA_FILE_FRAMES=30
+CHECK_CAMERA_FILE_SOURCE_FRAMES=60
 CHECK_SYNTHETIC_CAMERA_FRAMES=120
 CHECK_SYNTHETIC_MODEL_FRAMES=12
 CHECK_SYNTHETIC_OVERLAY_FRAMES=5
@@ -271,6 +276,11 @@ RPI_CAMERA_REPLAY_NV12=/home/chan/supercombo_models/replay_120.scnv12 ./rpi_came
 RPI_CAMERA_REPLAY_NV12=/home/chan/supercombo_models/replay_120.scnv12 \
   RPI_CAMERA_REPLAY_LOOP=1 ./rpi_camerad
 ```
+
+`scripts/rpi_smoke.sh camera-file` validates the OpenCV `VideoCapture` source
+path without physical camera hardware. It uses `ffmpeg` to convert
+`REPLAY_NV12` into a short MJPEG AVI under `OUT_DIR`, then runs `rpi_camerad`
+with `RPI_CAMERA_SOURCE` pointing at that file.
 
 For automated visual verification, `rpi_overlay` can dump its final rendered
 BGR frame as a PPM:
