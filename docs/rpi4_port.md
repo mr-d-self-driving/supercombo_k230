@@ -1,5 +1,7 @@
 # Raspberry Pi 4 runtime port
 
+Porting plan and subagent work split: [rpi4_port_plan.md](rpi4_port_plan.md).
+
 This port keeps the K230 runtime contract but swaps the hardware-specific parts:
 
 ```text
