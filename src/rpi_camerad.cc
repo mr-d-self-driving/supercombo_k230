@@ -207,6 +207,7 @@ int main(int argc, char *argv[])
         int request_w = env_int_local("RPI_CAMERA_CAPTURE_W", 1280);
         int request_h = env_int_local("RPI_CAMERA_CAPTURE_H", 720);
         const int request_fps = env_int_local("RPI_CAMERA_FPS", 30);
+        const int max_read_errors = env_int_local("RPI_CAMERA_MAX_READ_ERRORS", 90);
         if (!synthetic && !replay) {
             const std::string source = camera_source();
             std::string source_desc;
@@ -245,6 +246,7 @@ int main(int argc, char *argv[])
 
         uint64_t frame_id = 0;
         unsigned errors = 0;
+        unsigned consecutive_read_errors = 0;
         unsigned last_frames = 0;
         unsigned last_errors = 0;
         timeval start {};
@@ -266,8 +268,19 @@ int main(int argc, char *argv[])
             } else {
                 if (!cap.read(bgr) || bgr.empty()) {
                     ++errors;
+                    ++consecutive_read_errors;
+                    if (max_read_errors > 0 &&
+                        consecutive_read_errors >= static_cast<unsigned>(max_read_errors)) {
+                        std::fprintf(stderr,
+                                     "\nrpi_camerad error: source read failed %u consecutive times after frames=%llu "
+                                     "(run scripts/rpi_smoke.sh camera-probe and use a CAMERA_PROBE_NODE candidate=1 as RPI_CAMERA_SOURCE)\n",
+                                     consecutive_read_errors,
+                                     static_cast<unsigned long long>(frame_id));
+                        break;
+                    }
                     continue;
                 }
+                consecutive_read_errors = 0;
                 bgr_to_nv12_512x256(bgr, nv12);
             }
 

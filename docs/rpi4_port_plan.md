@@ -266,7 +266,7 @@ Real camera gate, when a usable camera is attached:
 
 ```sh
 scripts/rpi_smoke.sh camera-probe
-RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
+scripts/rpi_smoke.sh camera-real
 ```
 
 ### 9. Performance Acceptance

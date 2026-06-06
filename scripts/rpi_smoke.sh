@@ -273,7 +273,7 @@ summarize_single() {
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-file|camera-replay|camera-real)
-      print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done|error)'
+      print_matches camera "${OUT_DIR}/camera.log" 'CAMERA_AUTO_SOURCE|rpi_camerad (fps|done|error)'
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-probe)
@@ -429,6 +429,46 @@ probe_v4l2_nodes() {
   shopt -u nullglob
   echo "CAMERA_PROBE_V4L2 candidates=${candidates}"
   return 0
+}
+
+first_probe_candidate() {
+  local path="$1"
+  [[ -f "${path}" ]] || return 1
+  awk '
+    /^CAMERA_PROBE_NODE / && /candidate=1/ {
+      for (i = 1; i <= NF; ++i) {
+        if ($i ~ /^device=/) {
+          sub(/^device=/, "", $i)
+          print $i
+          exit
+        }
+      }
+    }
+  ' "${path}"
+}
+
+select_camera_source() {
+  if [[ -n "${RPI_CAMERA_SOURCE:-}" ]]; then
+    printf '%s\n' "${RPI_CAMERA_SOURCE}"
+    return 0
+  fi
+
+  : >"${OUT_DIR}/probe.log"
+  if ! command -v v4l2-ctl >/dev/null; then
+    echo "CAMERA_AUTO_SOURCE result=FAIL reason=v4l2_ctl_missing" >>"${OUT_DIR}/probe.log"
+    return 1
+  fi
+
+  probe_v4l2_nodes >>"${OUT_DIR}/probe.log"
+  local source
+  source="$(first_probe_candidate "${OUT_DIR}/probe.log")"
+  if [[ -z "${source}" ]]; then
+    echo "CAMERA_AUTO_SOURCE result=FAIL reason=no_candidate log=${OUT_DIR}/probe.log" >>"${OUT_DIR}/probe.log"
+    return 1
+  fi
+
+  echo "CAMERA_AUTO_SOURCE result=PASS source=${source}" >>"${OUT_DIR}/probe.log"
+  printf '%s\n' "${source}"
 }
 
 run_camera_probe() {
@@ -594,9 +634,36 @@ run_camera_only() {
       RPI_CAMERA_FPS="${CAMERA_FPS}" \
       "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
   elif [[ "${source_mode}" == "real" ]]; then
-    SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
-      RPI_CAMERA_FPS="${CAMERA_FPS}" \
-      "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
+    local real_source
+    real_source="$(select_camera_source || true)"
+    if [[ -z "${real_source}" ]]; then
+      {
+        echo "CAMERA_AUTO_SOURCE result=FAIL reason=no_candidate probe=${OUT_DIR}/probe.log"
+        if [[ -f "${OUT_DIR}/probe.log" ]]; then
+          grep -E 'CAMERA_AUTO_SOURCE|CAMERA_PROBE_NODE|CAMERA_PROBE_V4L2' "${OUT_DIR}/probe.log" || true
+        fi
+        false
+      } 2>&1 | tee "${OUT_DIR}/camera.log"
+    else
+      {
+        if [[ -n "${RPI_CAMERA_SOURCE:-}" ]]; then
+          echo "CAMERA_AUTO_SOURCE result=SKIP reason=env source=${real_source}"
+        else
+          echo "CAMERA_AUTO_SOURCE result=PASS source=${real_source}"
+        fi
+        local camera_real_timeout="${CAMERA_REAL_TIMEOUT_SEC:-15}"
+        local camera_real_env=(
+          SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}"
+          RPI_CAMERA_SOURCE="${real_source}"
+          RPI_CAMERA_FPS="${CAMERA_FPS}"
+        )
+        if command -v timeout >/dev/null && [[ "${camera_real_timeout}" != "0" ]]; then
+          timeout "${camera_real_timeout}s" env "${camera_real_env[@]}" "${ROOT_DIR}/rpi_camerad"
+        else
+          env "${camera_real_env[@]}" "${ROOT_DIR}/rpi_camerad"
+        fi
+      } 2>&1 | tee "${OUT_DIR}/camera.log"
+    fi
   else
     SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
       RPI_CAMERA_SYNTHETIC=1 \

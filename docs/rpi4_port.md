@@ -117,7 +117,7 @@ scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-file
 scripts/rpi_smoke.sh camera-replay
-RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
+scripts/rpi_smoke.sh camera-real
 scripts/rpi_smoke.sh synthetic
 scripts/rpi_smoke.sh replay
 scripts/rpi_smoke.sh manager
@@ -467,6 +467,9 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | install-tree `scripts/rpi_smoke.sh parity` and short `check` from `/tmp/supercombo_k230_rpi_install_test` | parity `PASS`, synthetic pipeline camera `29.83 fps`, model `11.32 fps`, manager camera `29.25 fps` / model `12.45 fps`, profile total `67.73 ms`; installed `rpi_*` paths used |
 | install-tree `scripts/rpi_smoke.sh artifacts` | `PASS`; model param sha256 `e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2`, model bin sha256 `88dc46956eb5255265c9695a29dc4fba7ec6e419e5af26de137df756c3ec277b`, ncnn lib sha256 `146cbec8f846e9d51b0c5f63dc2f5aba031804f3c8fc67677012c1455f1ef9ed` |
 | install-tree short `scripts/rpi_smoke.sh check` with artifacts/parity/profile | artifacts `PASS`, parity `PASS`, camera `39.46 fps`, camera-file `85.17 fps`, synthetic pipeline camera `29.71 fps`, model `11.25 fps`, overlay consumed `model_seq=6`, manager camera `29.29 fps` / model `14.35 fps`, profile total `69.27 ms` |
+| post-camera-bound short `scripts/rpi_smoke.sh check` | artifacts `PASS`, parity `PASS`, camera `39.43 fps`, camera-file `85.21 fps`, synthetic pipeline camera `29.62 fps`, model `10.59 fps`, overlay consumed `model_seq=6`, manager camera `29.69 fps` / model `10.19 fps`; `rpi_camerad` sha256 `a2892d68df12262a741235161c3198a61d9cc6cfc4f42449a6e835e5deb1de4e` |
+| `scripts/rpi_smoke.sh camera-real` with no visible USB/CSI camera | bounded failure: `CAMERA_AUTO_SOURCE result=FAIL reason=no_candidate`, all Raspberry Pi helper capture nodes remain `candidate=0` |
+| `RPI_CAMERA_SOURCE=/dev/video14 CAMERA_REAL_TIMEOUT_SEC=5 scripts/rpi_smoke.sh camera-real` | bounded failure on helper node: `timeout` rc `124`, `frames=0`, `errors=1` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 | manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
@@ -574,7 +577,7 @@ Once a camera is visible again, run:
 
 ```sh
 scripts/rpi_smoke.sh camera-probe
-RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
+scripts/rpi_smoke.sh camera-real
 ```
 
 `camera-probe` is expected to fail while no USB UVC or CSI camera is visible.
@@ -585,3 +588,10 @@ with `candidate=1` as `RPI_CAMERA_SOURCE=/dev/videoX`. Raspberry Pi codec/ISP
 helper nodes can expose `Video Capture` capabilities but are reported as
 `candidate=0 reason=platform_or_helper_capture`, so do not use those as the live
 camera source for this OpenCV path.
+`camera-real` now uses the first `candidate=1` V4L2 node automatically when
+`RPI_CAMERA_SOURCE` is not set. Set `RPI_CAMERA_SOURCE=/dev/videoX` only when
+you want to override the probe result.
+Live camera reads are bounded so a helper node that opens but never produces
+frames cannot hang the smoke run forever. `rpi_camerad` stops after
+`RPI_CAMERA_MAX_READ_ERRORS=90` consecutive failed reads by default, and
+`camera-real` is wrapped by `CAMERA_REAL_TIMEOUT_SEC=15` unless set to `0`.
