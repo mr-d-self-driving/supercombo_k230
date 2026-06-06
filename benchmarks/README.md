@@ -36,6 +36,10 @@ Available utilities:
 - `check_preprocess_parity`: deterministic `512x256 NV12 -> warped YUV6` and
   two-frame `[previous_yuv6, current_yuv6]` stacking contract check.
 - `check_ipc_abi`: shared ring/latest-channel/modelState ABI round-trip check.
+- `check_frame_metadata`: validates the latest `roadAiFrame` shared-memory
+  metadata from `rpi_camerad`, including frame dimensions, NV12 format, slot
+  bounds, frame-ring geometry, and crop fields. Run it after `rpi_camerad` has
+  published at least one frame.
 - `check_ncnn_output_contract`: pruned ncnn output split, recurrent-state
   carryover, parser payload gating, fallback behavior, and modelState sanity
   check.

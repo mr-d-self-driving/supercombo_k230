@@ -137,10 +137,11 @@ cv::Rect center_crop_2to1(const cv::Mat &frame)
     return cv::Rect(x, y, std::min(crop_w, frame.cols - x), std::min(crop_h, frame.rows - y));
 }
 
-void bgr_to_nv12_512x256(const cv::Mat &bgr, std::vector<uint8_t> &nv12)
+void bgr_to_nv12_512x256(const cv::Mat &bgr, std::vector<uint8_t> &nv12, cv::Rect *used_crop)
 {
     cv::Mat resized;
     const cv::Rect crop = center_crop_2to1(bgr);
+    if (used_crop) *used_crop = crop;
     cv::resize(bgr(crop), resized, cv::Size(kK230AiWidth, kK230AiHeight), 0.0, 0.0, cv::INTER_AREA);
 
     cv::Mat i420;
@@ -255,6 +256,7 @@ int main(int argc, char *argv[])
         last = start;
 
         cv::Mat bgr;
+        cv::Rect crop(0, 0, kK230AiWidth, kK230AiHeight);
         std::vector<uint8_t> nv12;
         while (!g_stop) {
             if (replay) {
@@ -263,8 +265,10 @@ int main(int argc, char *argv[])
                     replay_reader->rewind();
                     if (!replay_reader->read(nv12)) break;
                 }
+                crop = cv::Rect(0, 0, kK230AiWidth, kK230AiHeight);
             } else if (synthetic) {
                 fill_synthetic_nv12(nv12, frame_id);
+                crop = cv::Rect(0, 0, kK230AiWidth, kK230AiHeight);
             } else {
                 if (!cap.read(bgr) || bgr.empty()) {
                     ++errors;
@@ -281,7 +285,7 @@ int main(int argc, char *argv[])
                     continue;
                 }
                 consecutive_read_errors = 0;
-                bgr_to_nv12_512x256(bgr, nv12);
+                bgr_to_nv12_512x256(bgr, nv12, &crop);
             }
 
             const unsigned slot = static_cast<unsigned>(frame_id % frame_ring.slot_count());
@@ -299,10 +303,10 @@ int main(int argc, char *argv[])
             msg.width = kK230AiWidth;
             msg.height = kK230AiHeight;
             msg.format = V4L2_PIX_FMT_NV12;
-            msg.crop_x = 0;
-            msg.crop_y = 0;
-            msg.crop_width = synthetic ? kK230AiWidth : static_cast<uint32_t>(bgr.cols);
-            msg.crop_height = synthetic ? kK230AiHeight : static_cast<uint32_t>(bgr.rows);
+            msg.crop_x = static_cast<uint32_t>(crop.x);
+            msg.crop_y = static_cast<uint32_t>(crop.y);
+            msg.crop_width = static_cast<uint32_t>(crop.width);
+            msg.crop_height = static_cast<uint32_t>(crop.height);
             if (!frame_pub.publish(&msg, sizeof(msg))) {
                 ++errors;
             }

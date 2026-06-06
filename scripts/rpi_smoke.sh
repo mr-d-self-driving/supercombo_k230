@@ -30,6 +30,7 @@ reset_outputs() {
         "${OUT_DIR}/manager.log" \
         "${OUT_DIR}/artifacts.log" \
         "${OUT_DIR}/parity.log" \
+        "${OUT_DIR}/frame_metadata.log" \
         "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
         "${OUT_DIR}/dump_verify.log" \
@@ -216,6 +217,21 @@ validate_profile_latency_log() {
   return "${rc}"
 }
 
+validate_frame_metadata_log() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    echo "FRAME_METADATA_CHECK result=FAIL reason=missing_log log=${path}"
+    return 1
+  fi
+  print_matches frame_metadata "${path}" 'FRAME_METADATA'
+  if grep -q '^FRAME_METADATA result=PASS' "${path}"; then
+    echo "FRAME_METADATA_CHECK result=PASS"
+    return 0
+  fi
+  echo "FRAME_METADATA_CHECK result=FAIL log=${path}"
+  return 1
+}
+
 summarize_pipeline() {
   local source_mode="$1"
   local model_rc="$2"
@@ -335,10 +351,12 @@ summarize_single() {
       ;;
     camera)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
+      validate_frame_metadata_log "${OUT_DIR}/frame_metadata.log" || check_rc=1
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-file|camera-replay|camera-real)
       print_matches camera "${OUT_DIR}/camera.log" 'CAMERA_AUTO_SOURCE|rpi_camerad (fps|done|error)'
+      validate_frame_metadata_log "${OUT_DIR}/frame_metadata.log" || check_rc=1
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-probe)
@@ -389,6 +407,34 @@ require_executable() {
   fi
 }
 
+run_frame_metadata_check() {
+  local source_mode="$1"
+  require_executable check_frame_metadata
+  local expected=(
+    FRAME_EXPECT_WIDTH=512
+    FRAME_EXPECT_HEIGHT=256
+  )
+  case "${source_mode}" in
+    replay|synthetic)
+      expected+=(
+        FRAME_EXPECT_CROP_X=0
+        FRAME_EXPECT_CROP_Y=0
+        FRAME_EXPECT_CROP_W=512
+        FRAME_EXPECT_CROP_H=256
+      )
+      ;;
+    file)
+      expected+=(
+        FRAME_EXPECT_CROP_X=0
+        FRAME_EXPECT_CROP_Y=0
+        FRAME_EXPECT_CROP_W=1024
+        FRAME_EXPECT_CROP_H=512
+      )
+      ;;
+  esac
+  env "${expected[@]}" "${ROOT_DIR}/check_frame_metadata" 2>&1 | tee "${OUT_DIR}/frame_metadata.log"
+}
+
 file_size() {
   local path="$1"
   if stat -c '%s' "${path}" >/dev/null 2>&1; then
@@ -434,6 +480,7 @@ run_artifact_report() {
     report_artifact_file binary_rpi_modeld "${ROOT_DIR}/rpi_modeld" || rc=1
     report_artifact_file binary_rpi_camerad "${ROOT_DIR}/rpi_camerad" || rc=1
     report_artifact_file binary_rpi_overlay "${ROOT_DIR}/rpi_overlay" || rc=1
+    report_artifact_file binary_check_frame_metadata "${ROOT_DIR}/check_frame_metadata" || rc=1
     if command -v pkg-config >/dev/null && pkg-config --exists opencv4; then
       echo "ARTIFACT_TOOL kind=opencv4 version=$(pkg-config --modversion opencv4)"
     else
@@ -739,9 +786,13 @@ run_camera_only() {
   fi
   local rc=${PIPESTATUS[0]}
   set -e
+  local metadata_rc=0
+  if [[ "${rc}" -eq 0 ]]; then
+    run_frame_metadata_check "${source_mode}" || metadata_rc=$?
+  fi
   local summary_rc=0
   summarize_single "${summary_mode}" "${rc}" || summary_rc=$?
-  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+  if [[ "${rc}" -ne 0 || "${metadata_rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
     return 1
   fi
   return 0
@@ -1112,6 +1163,11 @@ append_check_step_summary() {
         ;;
       camera|camera_file|camera_replay|camera_real)
         check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
+        if [[ -f "${step_dir}/frame_metadata.log" ]]; then
+          tr '\r' '\n' <"${step_dir}/frame_metadata.log" |
+            grep -E '^FRAME_METADATA' |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
         ;;
       synthetic|replay)
         check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='

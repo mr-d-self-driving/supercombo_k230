@@ -292,6 +292,19 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
     target_link_libraries(check_ipc_abi PRIVATE atomic)
   endif()
 
+  add_executable(check_frame_metadata
+    benchmarks/check_frame_metadata.cc
+    src/k230_ipc.cc
+    src/model_output.cc
+    src/projection.cc
+  )
+  target_include_directories(check_frame_metadata PRIVATE ${PROJECT_LOCAL_INCLUDES})
+  target_compile_options(check_frame_metadata PRIVATE ${PROJECT_WARNINGS})
+  target_link_libraries(check_frame_metadata PRIVATE pthread)
+  if(NOT APPLE)
+    target_link_libraries(check_frame_metadata PRIVATE atomic)
+  endif()
+
   add_executable(check_ncnn_output_contract
     benchmarks/check_ncnn_output_contract.cc
     src/k230_ipc.cc
@@ -321,6 +334,7 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
     install(TARGETS
       check_preprocess_parity
       check_ipc_abi
+      check_frame_metadata
       check_ncnn_output_contract
       verify_calibration_equivalence
       RUNTIME DESTINATION .

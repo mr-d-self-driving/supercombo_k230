@@ -46,6 +46,7 @@ cmake -S . -B build-rpi4 \
 cmake --build build-rpi4 \
   --target rpi_camerad rpi_modeld rpi_overlay \
            check_preprocess_parity check_ipc_abi check_ncnn_output_contract \
+           check_frame_metadata \
            verify_calibration_equivalence \
   -j$(nproc)
 ```
@@ -217,6 +218,9 @@ calibration, and lateral-plan fields.
 `6267 = 5755 parser payload + 512 recurrent state`, recurrent carryover,
 non-pruned fallback behavior, parser/modelState sanity, and that recurrent-tail
 sentinels do not leak into plan/lane/road-edge output.
+`check_frame_metadata` is used by camera smokes after `rpi_camerad` exits. It
+reads the latest `roadAiFrame` shared-memory message and checks the `512x256`
+NV12 frame contract, ring dimensions, slot bounds, and source crop metadata.
 
 `perf` runs a short performance snapshot:
 
@@ -518,6 +522,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | short `scripts/rpi_smoke.sh check` with `RPI_PROFILE_WARMUP_FRAMES=5` | artifacts/parity/profile `PASS`, camera `39.36 fps`, camera-file `61.51 fps`, synthetic pipeline camera/model `30.43 / 7.52 fps`, manager camera/model `29.46 / 12.89 fps`, profile measured `15` frames after warmup `5`, p95 total/infer `77.04 / 74.10 ms` |
 | profile latency gate, 40 frames | default warmup `10`, measured `30` frames, avg total/infer `71.73 / 68.35 ms`, p95 total/infer `77.46 / 74.19 ms`; `PROFILE_CHECK` frames/p95 total/p95 infer all `PASS`, throttled `0x0` |
 | `perf` with steady FPS, 60 frames / 4 sec | model default raw/steady `11.24 / 11.34 fps`, threads3 `12.96 / 13.96 fps`, input_bf16 `15.42 / 18.56 fps`; manager no_overlay camera/model/steady `29.32 / 18.46 / 18.41 fps`, headless overlay `29.26 / 16.32 / 16.23 fps`, fb overlay `29.10 / 15.61 / 15.55 fps`; all default `PERF_CHECK` gates `PASS`, throttled `0x0` |
+| frame metadata smoke | synthetic 6 frames `35.58 fps`, replay 6 frames `35.41 fps`, both `FRAME_METADATA result=PASS` with crop `0,0,512,256`; camera-file fixture 6 frames `79.56 fps`, `FRAME_METADATA result=PASS` with crop `0,0,1024,512`; throttled `0x0` |
+| short `scripts/rpi_smoke.sh check` with frame metadata gate | artifacts/parity/profile `PASS`; `binary_check_frame_metadata` sha256 `ab0b6653f16c444a03544c01203f5d8366d55286b5b929f5dd077e686fc0b6f3`; camera `39.39 fps` metadata crop `0,0,512,256`; camera-file `92.62 fps` metadata crop `0,0,1024,512`; synthetic pipeline camera/model `29.82 / 12.66 fps`; manager camera/model `29.18 / 14.14 fps`; profile p95 total/infer `63.09 / 60.15 ms`; throttled `0x0` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
