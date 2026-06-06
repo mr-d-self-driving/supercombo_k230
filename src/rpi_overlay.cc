@@ -334,7 +334,9 @@ int main(int argc, char *argv[])
             }
         }
 
-        std::fprintf(stderr, "\nrpi_overlay done frames=%u errors=%u\n", displayed, errors);
+        std::fprintf(stderr, "\nrpi_overlay done frames=%u errors=%u model_seq=%llu have_model=%u\n",
+                     displayed, errors, static_cast<unsigned long long>(model_seq),
+                     have_model ? 1U : 0U);
         return displayed > 0 && errors == 0 ? 0 : 1;
     } catch (const std::exception &e) {
         std::fprintf(stderr, "rpi_overlay error: %s\n", e.what());

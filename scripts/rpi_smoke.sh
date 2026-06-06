@@ -4,8 +4,12 @@ set -euo pipefail
 MODE="${1:-replay}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-if [[ ! -x "${ROOT_DIR}/rpi_modeld" && -x "${SCRIPT_DIR}/rpi_modeld" ]]; then
+if [[ -n "${RPI_RUNTIME_DIR:-}" ]]; then
+  ROOT_DIR="${RPI_RUNTIME_DIR}"
+elif [[ ! -x "${ROOT_DIR}/rpi_modeld" && -x "${SCRIPT_DIR}/rpi_modeld" ]]; then
   ROOT_DIR="${SCRIPT_DIR}"
+elif [[ ! -x "${ROOT_DIR}/rpi_modeld" && -x "${ROOT_DIR}/build-rpi4/rpi_modeld" ]]; then
+  ROOT_DIR="${ROOT_DIR}/build-rpi4"
 fi
 
 MODEL_PARAM="${MODEL_PARAM:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.param}"
@@ -41,14 +45,101 @@ print_matches() {
   tr '\r' '\n' <"${path}" | grep -E "${pattern}" | tail -n 6 || tr '\r' '\n' <"${path}" | tail -n 6
 }
 
+last_log_line() {
+  local path="$1"
+  local pattern="$2"
+  [[ -f "${path}" ]] || return 1
+  tr '\r' '\n' <"${path}" | grep -E "${pattern}" | tail -n 1
+}
+
+field_from_line() {
+  local line="$1"
+  local key="$2"
+  sed -n "s/.*${key}=\([^ ]*\).*/\1/p" <<<"${line}"
+}
+
+number_ge() {
+  local actual="$1"
+  local minimum="$2"
+  [[ -n "${actual}" && "${actual}" != "NA" ]] || return 1
+  awk -v actual="${actual}" -v minimum="${minimum}" \
+    'BEGIN { exit !((actual + 0.0) >= (minimum + 0.0)) }'
+}
+
+validate_component_log() {
+  local component="$1"
+  local path="$2"
+  local pattern="$3"
+  local min_fps="${4:-0}"
+
+  local line
+  if ! line="$(last_log_line "${path}" "${pattern}")"; then
+    echo "SMOKE_CHECK component=${component} result=FAIL reason=missing_done log=${path}"
+    return 1
+  fi
+
+  local frames errors fps missed model_seq have_model
+  frames="$(field_from_line "${line}" frames)"
+  errors="$(field_from_line "${line}" errors)"
+  fps="$(field_from_line "${line}" fps)"
+  missed="$(field_from_line "${line}" missed)"
+  model_seq="$(field_from_line "${line}" model_seq)"
+  have_model="$(field_from_line "${line}" have_model)"
+  echo "SMOKE_METRIC component=${component} frames=${frames:-NA} missed=${missed:-NA} errors=${errors:-NA} fps=${fps:-NA} model_seq=${model_seq:-NA} have_model=${have_model:-NA}"
+
+  if [[ -z "${frames}" ]] || ! number_ge "${frames}" 1; then
+    echo "SMOKE_CHECK component=${component} result=FAIL reason=no_frames frames=${frames:-NA}"
+    return 1
+  fi
+  if [[ -z "${errors}" || "${errors}" != "0" ]]; then
+    echo "SMOKE_CHECK component=${component} result=FAIL reason=errors errors=${errors:-NA}"
+    return 1
+  fi
+  if [[ "${min_fps}" != "0" && "${min_fps}" != "0.0" ]]; then
+    if ! number_ge "${fps:-NA}" "${min_fps}"; then
+      echo "SMOKE_CHECK component=${component} result=FAIL reason=fps actual=${fps:-NA} min=${min_fps}"
+      return 1
+    fi
+  fi
+  if [[ "${component}" == "overlay" && "${SMOKE_REQUIRE_OVERLAY_MODEL:-1}" != "0" ]]; then
+    if ! number_ge "${model_seq:-NA}" 1; then
+      echo "SMOKE_CHECK component=${component} result=FAIL reason=no_model_state model_seq=${model_seq:-NA}"
+      return 1
+    fi
+  fi
+
+  echo "SMOKE_CHECK component=${component} result=PASS"
+  return 0
+}
+
+validate_pipeline_logs() {
+  local rc=0
+  validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || rc=1
+  validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld (synthetic )?done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || rc=1
+  validate_component_log overlay "${OUT_DIR}/overlay.log" 'rpi_overlay done frames=' "${SMOKE_MIN_OVERLAY_FPS:-0}" || rc=1
+  return "${rc}"
+}
+
+validate_manager_log() {
+  local rc=0
+  validate_component_log camera "${OUT_DIR}/manager.log" 'rpi_camerad done frames=' "${SMOKE_MIN_MANAGER_CAMERA_FPS:-20}" || rc=1
+  validate_component_log model "${OUT_DIR}/manager.log" 'rpi_modeld done frames=' "${SMOKE_MIN_MANAGER_MODEL_FPS:-1}" || rc=1
+  if [[ "${RPI_RUN_OVERLAY:-1}" != "0" ]]; then
+    validate_component_log overlay "${OUT_DIR}/manager.log" 'rpi_overlay done frames=' "${SMOKE_MIN_MANAGER_OVERLAY_FPS:-0}" || rc=1
+  fi
+  return "${rc}"
+}
+
 summarize_pipeline() {
   local source_mode="$1"
   local model_rc="$2"
   local overlay_rc="$3"
   local overlay_dump="$4"
   local dump_rc="$5"
+  local check_rc=0
   local result="PASS"
-  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 ]]; then
+  validate_pipeline_logs || check_rc=1
+  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 || "${check_rc}" -ne 0 ]]; then
     result="FAIL"
   fi
   print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
@@ -61,7 +152,8 @@ summarize_pipeline() {
       echo "dump missing: ${overlay_dump}"
     fi
   fi
-  echo "SMOKE result=${result} mode=${source_mode} model_rc=${model_rc} overlay_rc=${overlay_rc} dump_rc=${dump_rc} dump=${overlay_dump:-none} logs=${OUT_DIR}"
+  echo "SMOKE result=${result} mode=${source_mode} model_rc=${model_rc} overlay_rc=${overlay_rc} dump_rc=${dump_rc} check_rc=${check_rc} dump=${overlay_dump:-none} logs=${OUT_DIR}"
+  return "${check_rc}"
 }
 
 verify_ppm_dump() {
@@ -106,31 +198,37 @@ PY
 summarize_single() {
   local mode="$1"
   local rc="$2"
+  local check_rc=0
   local result="PASS"
-  if [[ "${rc}" -ne 0 ]]; then
-    result="FAIL"
-  fi
   case "${mode}" in
     model)
       print_matches model "${OUT_DIR}/model.log" 'rpi_modeld(:| synthetic| replay| .*done)'
+      validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
       ;;
     camera)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
+      validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-replay|camera-real)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done|error)'
+      validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
     camera-probe)
       print_matches probe "${OUT_DIR}/probe.log" 'CAMERA_PROBE|/dev/video|No cameras|UVC|Web Camera|Camera|error'
       ;;
     manager)
       print_matches manager "${OUT_DIR}/manager.log" 'rpi_(manager|camerad|modeld|overlay).*'
+      validate_manager_log || check_rc=1
       ;;
     perf)
       print_matches perf "${OUT_DIR}/perf.log" 'PERF|throttled|temp=|scaling_governor'
       ;;
   esac
-  echo "SMOKE result=${result} mode=${mode} rc=${rc} logs=${OUT_DIR}"
+  if [[ "${rc}" -ne 0 || "${check_rc}" -ne 0 ]]; then
+    result="FAIL"
+  fi
+  echo "SMOKE result=${result} mode=${mode} rc=${rc} check_rc=${check_rc} logs=${OUT_DIR}"
+  return "${check_rc}"
 }
 
 cleanup_shm() {
@@ -150,6 +248,15 @@ require_file() {
   local path="$1"
   if [[ ! -f "${path}" ]]; then
     echo "missing file: ${path}" >&2
+    exit 2
+  fi
+}
+
+require_executable() {
+  local name="$1"
+  local path="${ROOT_DIR}/${name}"
+  if [[ ! -x "${path}" ]]; then
+    echo "missing executable: ${path} (ROOT_DIR=${ROOT_DIR}, set RPI_RUNTIME_DIR=/path/to/runtime if needed)" >&2
     exit 2
   fi
 }
@@ -204,6 +311,7 @@ run_camera_probe() {
 run_model_only() {
   require_file "${MODEL_PARAM}"
   require_file "${MODEL_BIN}"
+  require_executable rpi_modeld
   reset_outputs
   set +e
   SUPERCOMBO_MAX_FRAMES="${MODEL_FRAMES:-60}" \
@@ -212,8 +320,12 @@ run_model_only() {
     "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" 2>&1 | tee "${OUT_DIR}/model.log"
   local rc=${PIPESTATUS[0]}
   set -e
-  summarize_single model "${rc}"
-  return "${rc}"
+  local summary_rc=0
+  summarize_single model "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 run_camera_only() {
@@ -226,6 +338,7 @@ run_camera_only() {
   fi
   reset_outputs
   cleanup_shm
+  require_executable rpi_camerad
   set +e
   if [[ "${source_mode}" == "replay" ]]; then
     require_file "${REPLAY_NV12}"
@@ -245,14 +358,21 @@ run_camera_only() {
   fi
   local rc=${PIPESTATUS[0]}
   set -e
-  summarize_single "${summary_mode}" "${rc}"
-  return "${rc}"
+  local summary_rc=0
+  summarize_single "${summary_mode}" "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 run_pipeline() {
   local source_mode="$1"
   require_file "${MODEL_PARAM}"
   require_file "${MODEL_BIN}"
+  require_executable rpi_camerad
+  require_executable rpi_modeld
+  require_executable rpi_overlay
   reset_outputs
   cleanup_shm
   trap 'kill_children' EXIT
@@ -273,8 +393,15 @@ run_pipeline() {
   cam_pid=$!
 
   sleep 0.5
-  SUPERCOMBO_MAX_FRAMES="${MODEL_FRAMES:-80}" \
-    "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" >"${OUT_DIR}/model.log" 2>&1 &
+  local model_timeout="${MODEL_TIMEOUT_SEC:-60}"
+  local model_env=(SUPERCOMBO_MAX_FRAMES="${MODEL_FRAMES:-80}")
+  if command -v timeout >/dev/null && [[ "${model_timeout}" != "0" ]]; then
+    timeout "${model_timeout}s" env "${model_env[@]}" \
+      "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" >"${OUT_DIR}/model.log" 2>&1 &
+  else
+    env "${model_env[@]}" \
+      "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" >"${OUT_DIR}/model.log" 2>&1 &
+  fi
   model_pid=$!
 
   sleep 0.2
@@ -317,8 +444,9 @@ run_pipeline() {
   if [[ -f "${OUT_DIR}/dump_verify.log" ]]; then
     cat "${OUT_DIR}/dump_verify.log"
   fi
-  summarize_pipeline "${source_mode}" "${model_rc}" "${overlay_rc}" "${overlay_dump}" "${dump_rc}"
-  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 ]]; then
+  local summary_rc=0
+  summarize_pipeline "${source_mode}" "${model_rc}" "${overlay_rc}" "${overlay_dump}" "${dump_rc}" || summary_rc=$?
+  if [[ "${model_rc}" -ne 0 || "${overlay_rc}" -ne 0 || "${dump_rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
     return 1
   fi
   return 0
@@ -327,6 +455,12 @@ run_pipeline() {
 run_manager() {
   require_file "${MODEL_PARAM}"
   require_file "${MODEL_BIN}"
+  require_executable rpi_manager.py
+  require_executable rpi_camerad
+  require_executable rpi_modeld
+  if [[ "${RPI_RUN_OVERLAY:-1}" != "0" ]]; then
+    require_executable rpi_overlay
+  fi
   reset_outputs
   set +e
   RPI_CAMERA_SYNTHETIC="${RPI_CAMERA_SYNTHETIC:-1}" \
@@ -336,8 +470,12 @@ run_manager() {
     "${ROOT_DIR}/rpi_manager.py" "${MODEL_PARAM}" "${MODEL_BIN}" 2>&1 | tee "${OUT_DIR}/manager.log"
   local rc=${PIPESTATUS[0]}
   set -e
-  summarize_single manager "${rc}"
-  return "${rc}"
+  local summary_rc=0
+  summarize_single manager "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 append_system_perf_state() {
@@ -471,8 +609,12 @@ run_perf_snapshot() {
   run_perf_manager_case overlay_headless_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_MODEL_FPS:-12}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 || rc=1
   run_perf_manager_case overlay_fb_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_FB_MODEL_FPS:-8}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 || rc=1
 
-  summarize_single perf "${rc}"
-  return "${rc}"
+  local summary_rc=0
+  summarize_single perf "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 run_check_step() {
@@ -486,7 +628,15 @@ run_check_step() {
     OUT_DIR="${step_dir}"
     DISPLAY_MODE=0
     OVERLAY_FPS="${CHECK_OVERLAY_FPS:-2}"
+    RPI_DISPLAY=0
+    RPI_RUN_OVERLAY=1
+    RPI_CLEAR_SHM=1
+    RPI_NO_RESTART=0
+    export RPI_DISPLAY RPI_RUN_OVERLAY RPI_CLEAR_SHM RPI_NO_RESTART
     unset RPI_CAMERA_SOURCE
+    unset RPI_CAMERA_REPLAY_NV12
+    unset SUPERCOMBO_REPLAY_NV12
+    unset RPI_DISPLAY_FB
     "$@"
   )
   local rc=$?
@@ -525,6 +675,7 @@ run_check_synthetic() {
   MODEL_FRAMES="${CHECK_SYNTHETIC_MODEL_FRAMES:-12}"
   OVERLAY_FRAMES="${CHECK_SYNTHETIC_OVERLAY_FRAMES:-5}"
   OVERLAY_TIMEOUT_SEC="${CHECK_OVERLAY_TIMEOUT_SEC:-15}"
+  MODEL_TIMEOUT_SEC="${CHECK_MODEL_TIMEOUT_SEC:-30}"
   DUMP="${CHECK_SYNTHETIC_DUMP:-1}"
   run_pipeline synthetic
 }
@@ -534,6 +685,7 @@ run_check_replay() {
   MODEL_FRAMES="${CHECK_REPLAY_MODEL_FRAMES:-12}"
   OVERLAY_FRAMES="${CHECK_REPLAY_OVERLAY_FRAMES:-5}"
   OVERLAY_TIMEOUT_SEC="${CHECK_OVERLAY_TIMEOUT_SEC:-15}"
+  MODEL_TIMEOUT_SEC="${CHECK_MODEL_TIMEOUT_SEC:-30}"
   DUMP="${CHECK_REPLAY_DUMP:-1}"
   run_pipeline replay
 }

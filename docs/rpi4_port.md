@@ -61,6 +61,14 @@ cd /home/chan/supercombo_k230_rpi_install
 scripts/rpi_smoke.sh replay
 ```
 
+`scripts/rpi_smoke.sh` resolves binaries from the install/source root by default.
+If you keep the Pi binaries somewhere else, point the smoke wrapper at that
+directory:
+
+```sh
+RPI_RUNTIME_DIR=/path/to/runtime scripts/rpi_smoke.sh check
+```
+
 ## Model
 
 Use the pruned visualization ncnn pair:
@@ -101,7 +109,29 @@ The script writes logs to `/tmp/rpi_smoke` by default. Override paths with
 `MODEL_PARAM`, `MODEL_BIN`, `REPLAY_NV12`, and `OUT_DIR`. Frame dump is off by
 default for performance; enable it with `DUMP=1` or `OVERLAY_DUMP=/tmp/out.ppm`.
 At the end of each pipeline smoke, the script prints a single `SMOKE result=...`
-line plus the final camera/model/overlay FPS or completion lines.
+line plus the final camera/model/overlay FPS or completion lines. It also emits
+machine-readable `SMOKE_METRIC` and `SMOKE_CHECK` lines for the final component
+`done` records. A smoke check fails if any component reports nonzero errors, no
+frames, or misses the low default FPS floor.
+Overlay smoke checks also require `model_seq > 0` by default, which proves the
+overlay consumed at least one `modelState` update rather than only drawing the
+camera frame. Disable that only for overlay-only debugging with
+`SMOKE_REQUIRE_OVERLAY_MODEL=0`.
+
+Default smoke floors are intentionally looser than `perf`:
+
+```text
+SMOKE_MIN_CAMERA_FPS=20
+SMOKE_MIN_MODEL_FPS=1
+SMOKE_MIN_OVERLAY_FPS=0
+SMOKE_MIN_MANAGER_CAMERA_FPS=20
+SMOKE_MIN_MANAGER_MODEL_FPS=1
+SMOKE_MIN_MANAGER_OVERLAY_FPS=0
+SMOKE_REQUIRE_OVERLAY_MODEL=1
+```
+
+Raise these only when the Pi is in a stable performance test setup. Use `perf`
+for the stricter throughput snapshot.
 
 `perf` runs a short performance snapshot:
 
@@ -155,6 +185,9 @@ to record camera discovery state as an informational step. Add
 `CHECK_WITH_PERF=1` when you want the aggregate run to include the performance
 threshold snapshot. Each subtest writes to its own directory under
 `/tmp/rpi_smoke/check`, so the logs are safe to compare after the aggregate run.
+Each `check` subtest forces the camera-less/headless path by clearing camera
+source/replay/display override env vars and setting `RPI_DISPLAY=0`,
+`RPI_RUN_OVERLAY=1`, and `RPI_CLEAR_SHM=1`.
 
 Useful bounds for shorter or longer checks:
 
@@ -169,6 +202,7 @@ CHECK_REPLAY_CAMERA_FRAMES=120
 CHECK_REPLAY_MODEL_FRAMES=12
 CHECK_REPLAY_OVERLAY_FRAMES=5
 CHECK_MANAGER_SEC=5
+CHECK_MODEL_TIMEOUT_SEC=30
 CHECK_INCLUDE_REPLAY=auto
 CHECK_WITH_PERF=0
 CHECK_PERF_MODEL_FRAMES=40
@@ -177,6 +211,10 @@ CHECK_PERF_MANAGER_SEC=4
 
 Pipeline smokes run `rpi_overlay` under `timeout` when GNU coreutils is
 available. Override the default 20 seconds with `OVERLAY_TIMEOUT_SEC=...`.
+`rpi_modeld` is also wrapped with `timeout` in pipeline smokes so a missing or
+too-short camera source fails instead of hanging forever. Override the default
+60 seconds with `MODEL_TIMEOUT_SEC=...`, or use `CHECK_MODEL_TIMEOUT_SEC=...`
+inside `check`.
 
 Set `RPI_PROFILE_MODEL=1` to split modeld timing into:
 
