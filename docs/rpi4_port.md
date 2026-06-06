@@ -169,11 +169,14 @@ The default aggregate `check` runs this first unless `CHECK_WITH_ARTIFACTS=0`.
 `p95`/`max` latency:
 
 ```text
-PROFILE_METRIC mode=synthetic frames=40 total_ms=... warp_ms=... input_ms=... infer_ms=... output_ms=... p95_total_ms=... p95_infer_ms=... max_total_ms=... max_infer_ms=...
+PROFILE_METRIC mode=synthetic frames=40 warmup=0 total_ms=... warp_ms=... input_ms=... infer_ms=... output_ms=... p95_total_ms=... p95_infer_ms=... max_total_ms=... max_infer_ms=...
 ```
 
 Use `PROFILE_MODEL_FRAMES=...` for longer samples, or `CHECK_WITH_PROFILE=1`
-to include the same timing breakdown in `scripts/rpi_smoke.sh check`.
+to include the same timing breakdown in `scripts/rpi_smoke.sh check`. Set
+`RPI_PROFILE_WARMUP_FRAMES=N` to process but exclude the first `N` frames from
+the reported average/p95/max, which is useful when separating cold-start spikes
+from steady-state inference.
 
 `parity` runs the deterministic contract checks that do not require a camera or
 ncnn inference:
@@ -497,6 +500,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | follow-up 120-frame profile, explicit input mode comparison | `RPI_NCNN_INPUT_BF16=1`: `12.30 fps`, avg total `80.61 ms`, infer `76.29 ms`; `RPI_NCNN_INPUT_BF16=0`: `18.45 fps`, avg total `53.79 ms`, infer `51.10 ms`; throttled `0x0` |
 | profile percentile smoke, 40 frames | `PROFILE_METRIC` includes `p95/max`; avg total `89.82 ms`, avg infer `86.48 ms`, p95 total/infer `275.75 / 272.88 ms`, max total/infer `287.52 / 284.64 ms`, throttled `0x0`; `rpi_modeld` sha256 `02780b39655c179bdae0f248cc7e5d9972f9aa962898346ddaac032df7ea1b5d` |
 | short `scripts/rpi_smoke.sh check` with percentile profile | artifacts/parity/profile `PASS`, camera `39.10 fps`, camera-file `99.41 fps`, synthetic pipeline camera/model `29.72 / 11.05 fps`, manager camera/model `29.57 / 14.60 fps`, profile p95 total/infer `78.87 / 68.28 ms`, max total/infer `99.10 / 96.20 ms` |
+| profile warmup comparison, 50 frames | warmup `0`: measured `50` frames, avg total/infer `91.68 / 88.57 ms`, p95 total/infer `323.03 / 319.99 ms`; warmup `10`: measured `40` frames, avg total/infer `56.79 / 54.14 ms`, p95 total/infer `55.83 / 53.19 ms`; both throttled `0x0`, `rpi_modeld` sha256 `8e2758f7c1b2eac4832e3f8be3ff7693335767e488feeb4b1fd4c6392d90a242` |
+| short `scripts/rpi_smoke.sh check` with `RPI_PROFILE_WARMUP_FRAMES=5` | artifacts/parity/profile `PASS`, camera `39.36 fps`, camera-file `61.51 fps`, synthetic pipeline camera/model `30.43 / 7.52 fps`, manager camera/model `29.46 / 12.89 fps`, profile measured `15` frames after warmup `5`, p95 total/infer `77.04 / 74.10 ms` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.

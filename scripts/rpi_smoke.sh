@@ -149,9 +149,10 @@ emit_profile_metric() {
     echo "PROFILE_METRIC result=missing log=${path}"
     return 1
   fi
-  local mode frames total warp input infer output p95_total p95_infer max_total max_infer
+  local mode frames warmup total warp input infer output p95_total p95_infer max_total max_infer
   mode="$(field_from_line "${line}" mode)"
   frames="$(field_from_line "${line}" frames)"
+  warmup="$(field_from_line "${line}" warmup)"
   total="$(field_from_line "${line}" total)"
   warp="$(field_from_line "${line}" warp)"
   input="$(field_from_line "${line}" input)"
@@ -161,7 +162,7 @@ emit_profile_metric() {
   p95_infer="$(field_from_line "${line}" p95_infer)"
   max_total="$(field_from_line "${line}" max_total)"
   max_infer="$(field_from_line "${line}" max_infer)"
-  echo "PROFILE_METRIC mode=${mode:-NA} frames=${frames:-NA} total_ms=${total:-NA} warp_ms=${warp:-NA} input_ms=${input:-NA} infer_ms=${infer:-NA} output_ms=${output:-NA} p95_total_ms=${p95_total:-NA} p95_infer_ms=${p95_infer:-NA} max_total_ms=${max_total:-NA} max_infer_ms=${max_infer:-NA}"
+  echo "PROFILE_METRIC mode=${mode:-NA} frames=${frames:-NA} warmup=${warmup:-NA} total_ms=${total:-NA} warp_ms=${warp:-NA} input_ms=${input:-NA} infer_ms=${infer:-NA} output_ms=${output:-NA} p95_total_ms=${p95_total:-NA} p95_infer_ms=${p95_infer:-NA} max_total_ms=${max_total:-NA} max_infer_ms=${max_infer:-NA}"
   return 0
 }
 

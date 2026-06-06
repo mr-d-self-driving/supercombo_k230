@@ -29,6 +29,7 @@ void signal_handler(int)
 
 struct TimingStats {
     unsigned count = 0;
+    unsigned warmup = 0;
     double warp_ms = 0.0;
     double input_ms = 0.0;
     double infer_ms = 0.0;
@@ -65,12 +66,11 @@ struct TimingStats {
 
     void print(const char *mode) const
     {
-        if (count == 0) return;
-        const double scale = 1.0 / static_cast<double>(count);
+        const double scale = count > 0 ? 1.0 / static_cast<double>(count) : 0.0;
         std::fprintf(stderr,
-                     "rpi_modeld profile mode=%s frames=%u avg_ms total=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f "
+                     "rpi_modeld profile mode=%s frames=%u warmup=%u avg_ms total=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f "
                      "p95_total=%.2f p95_infer=%.2f max_total=%.2f max_infer=%.2f\n",
-                     mode, count, total_ms * scale, warp_ms * scale, input_ms * scale,
+                     mode, count, warmup, total_ms * scale, warp_ms * scale, input_ms * scale,
                      infer_ms * scale, output_ms * scale,
                      percentile(total_samples, 95.0f), percentile(infer_samples, 95.0f),
                      max_total_ms, max_infer_ms);
@@ -89,6 +89,11 @@ unsigned env_u32_local(const char *name, unsigned default_value)
     char *end = nullptr;
     const unsigned long parsed = std::strtoul(value, &end, 10);
     return end == value ? default_value : static_cast<unsigned>(parsed);
+}
+
+bool should_profile_frame(unsigned frame_index, unsigned warmup_frames)
+{
+    return frame_index >= warmup_frames;
 }
 
 struct Nv12Frame {
@@ -231,7 +236,9 @@ int run_synthetic(const AppConfig &config, NcnnSupercomboModel &model,
         config.max_frames > 0 ? config.max_frames : 30);
     unsigned errors = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    const unsigned profile_warmup = env_u32_local("RPI_PROFILE_WARMUP_FRAMES", 0);
     TimingStats timing_stats;
+    timing_stats.warmup = profile_warmup;
     timeval start {};
     gettimeofday(&start, nullptr);
 
@@ -241,7 +248,7 @@ int run_synthetic(const AppConfig &config, NcnnSupercomboModel &model,
         float model_ms = 0.0f;
         NcnnSupercomboModel::RunTiming timing;
         run_one_frame(model, model_pub, calibration, lateral_control, frame, i, errors, &model_ms, &timing);
-        if (profile) timing_stats.add(timing);
+        if (profile && should_profile_frame(i, profile_warmup)) timing_stats.add(timing);
         if (profile) {
             std::fprintf(stderr,
                          "rpi_modeld synthetic: frame=%u/%u model_ms=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f errors=%u          \r",
@@ -278,7 +285,9 @@ int run_replay(const AppConfig &config, NcnnSupercomboModel &model,
     unsigned processed = 0;
     unsigned errors = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    const unsigned profile_warmup = env_u32_local("RPI_PROFILE_WARMUP_FRAMES", 0);
     TimingStats timing_stats;
+    timing_stats.warmup = profile_warmup;
     timeval start {};
     gettimeofday(&start, nullptr);
 
@@ -288,7 +297,7 @@ int run_replay(const AppConfig &config, NcnnSupercomboModel &model,
         NcnnSupercomboModel::RunTiming timing;
         run_one_frame(model, model_pub, calibration, lateral_control, frame, processed, errors, &model_ms, &timing);
         ++processed;
-        if (profile) timing_stats.add(timing);
+        if (profile && should_profile_frame(processed - 1, profile_warmup)) timing_stats.add(timing);
         if (profile) {
             std::fprintf(stderr,
                          "rpi_modeld replay: frame=%u/%u model_ms=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f errors=%u          \r",
@@ -336,7 +345,9 @@ int run_live(const AppConfig &config, NcnnSupercomboModel &model,
     unsigned errors = 0;
     unsigned missed = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    const unsigned profile_warmup = env_u32_local("RPI_PROFILE_WARMUP_FRAMES", 0);
     TimingStats timing_stats;
+    timing_stats.warmup = profile_warmup;
     timeval start {};
     timeval last {};
     gettimeofday(&start, nullptr);
@@ -369,7 +380,7 @@ int run_live(const AppConfig &config, NcnnSupercomboModel &model,
         run_one_nv12(model, model_pub, calibration, lateral_control, nv12, meta.width, meta.height,
                      meta.frame_id, errors, &model_ms, &timing);
         ++processed;
-        if (profile) timing_stats.add(timing);
+        if (profile && should_profile_frame(processed - 1, profile_warmup)) timing_stats.add(timing);
 
         if (config.max_frames > 0 && processed >= config.max_frames) break;
 
