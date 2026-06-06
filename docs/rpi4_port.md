@@ -93,6 +93,7 @@ RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
 scripts/rpi_smoke.sh synthetic
 scripts/rpi_smoke.sh replay
 scripts/rpi_smoke.sh manager
+scripts/rpi_smoke.sh perf
 ```
 
 The script writes logs to `/tmp/rpi_smoke` by default. Override paths with
@@ -100,6 +101,21 @@ The script writes logs to `/tmp/rpi_smoke` by default. Override paths with
 default for performance; enable it with `DUMP=1` or `OVERLAY_DUMP=/tmp/out.ppm`.
 At the end of each pipeline smoke, the script prints a single `SMOKE result=...`
 line plus the final camera/model/overlay FPS or completion lines.
+
+`perf` runs a short performance snapshot:
+
+```text
+model default
+model threads3
+model input_bf16
+manager no_overlay
+manager overlay_headless_2fps
+manager overlay_fb_2fps
+```
+
+It writes detailed logs to `/tmp/rpi_smoke/perf*.log` and prints `PERF ...`
+summary lines. Use `PERF_MODEL_FRAMES=120` or `PERF_MANAGER_SEC=10` for longer,
+less noisy measurements.
 
 Set `RPI_PROFILE_MODEL=1` to split modeld timing into:
 
@@ -114,7 +130,7 @@ All-in-one manager smoke:
 
 ```sh
 cd /home/chan/supercombo_k230_rpi
-RPI_CAMERA_SYNTHETIC=1 RPI_DISPLAY=fb RPI_MANAGER_MAX_SEC=10 ./rpi_manager.py \
+RPI_CAMERA_SYNTHETIC=1 RPI_DISPLAY=0 RPI_MANAGER_MAX_SEC=10 ./rpi_manager.py \
   /home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.param \
   /home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin
 ```
@@ -134,7 +150,8 @@ RPI_OVERLAY_FPS=2
 ```
 
 Use `RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 scripts/rpi_smoke.sh manager` to include
-framebuffer output while keeping modeld close to the headless baseline.
+framebuffer output for visual checks. This is lower cost than 5-10 fps overlay,
+but `/dev/fb0` writes can still introduce modeld stalls on this Pi.
 
 Camera input modes:
 
@@ -187,7 +204,7 @@ SUPERCOMBO_MAX_FRAMES=120 ./rpi_modeld \
   /home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin &
 model=$!
 sleep 0.2
-SUPERCOMBO_MAX_FRAMES=60 RPI_DISPLAY=0 RPI_OVERLAY_FPS=10 ./rpi_overlay
+SUPERCOMBO_MAX_FRAMES=60 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 ./rpi_overlay
 wait $model
 kill $cam 2>/dev/null || true
 ```
@@ -204,7 +221,7 @@ SUPERCOMBO_MAX_FRAMES=60 ./rpi_modeld \
   /home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin &
 model=$!
 sleep 0.2
-SUPERCOMBO_MAX_FRAMES=30 RPI_DISPLAY=fb RPI_OVERLAY_FPS=10 ./rpi_overlay
+SUPERCOMBO_MAX_FRAMES=30 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 ./rpi_overlay
 wait $model
 kill $cam 2>/dev/null || true
 ```
@@ -257,6 +274,10 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | manager, fb overlay `5 fps` | camera `29.12 fps`, model `15.41 fps`, overlay `38 frames`, errors `0` |
 | manager, fb overlay `2 fps` | camera `29.13 fps`, model `18.54 fps`, overlay `15 frames`, errors `0` |
 | manager, fb overlay uncapped | camera `29.06 fps`, model `16.31 fps`, overlay `226 frames`, errors `0` |
+| `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | model default `19.50 fps`, threads3 `16.76 fps`, input BF16 `19.46 fps` |
+| same perf snapshot, manager no overlay | camera `29.21 fps`, model `19.37 fps`, errors `0` |
+| same perf snapshot, manager headless overlay `2 fps` | camera `29.10 fps`, model `18.30 fps`, overlay `8 frames`, errors `0` |
+| same perf snapshot, manager fb overlay `2 fps` | camera `29.20 fps`, model `11.89 fps`, overlay `8 frames`, errors `0`; observed framebuffer stall |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -270,7 +291,7 @@ The current Pi bottleneck is ncnn inference, not NV12 warp/YUV6 packing. After
 the first frame builds the warp map, preprocessing stays around `3 ms/frame`
 combined, while ncnn inference stays around `46-48 ms/frame`.
 Framebuffer overlay can still steal enough CPU/memory bandwidth to cause modeld
-spikes, so the default overlay cap is `2 fps`.
+spikes, so the default display path is headless and the overlay cap is `2 fps`.
 
 Quick ncnn option sweep, 50 synthetic frames:
 

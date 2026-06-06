@@ -23,6 +23,7 @@ reset_outputs() {
         "${OUT_DIR}/model.log" \
         "${OUT_DIR}/overlay.log" \
         "${OUT_DIR}/manager.log" \
+        "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
         "${OUT_DIR}/dump_verify.log" \
         "${OUT_DIR}/overlay.ppm"
@@ -124,6 +125,9 @@ summarize_single() {
       ;;
     manager)
       print_matches manager "${OUT_DIR}/manager.log" 'rpi_(manager|camerad|modeld|overlay).*'
+      ;;
+    perf)
+      print_matches perf "${OUT_DIR}/perf.log" 'PERF|throttled|temp=|scaling_governor'
       ;;
   esac
   echo "SMOKE result=${result} mode=${mode} rc=${rc} logs=${OUT_DIR}"
@@ -331,6 +335,89 @@ run_manager() {
   return "${rc}"
 }
 
+append_system_perf_state() {
+  {
+    echo "=== cpu ==="
+    for governor in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+      [[ -f "${governor}" ]] && echo "${governor}=$(cat "${governor}")"
+    done
+    for freq in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
+      [[ -f "${freq}" ]] && echo "${freq}=$(cat "${freq}")"
+    done
+    if command -v vcgencmd >/dev/null; then
+      vcgencmd get_throttled || true
+      vcgencmd measure_temp || true
+      vcgencmd measure_clock arm || true
+    fi
+  } >>"${OUT_DIR}/perf.log"
+}
+
+run_perf_model_case() {
+  local name="$1"
+  shift
+  local frames="${PERF_MODEL_FRAMES:-60}"
+  echo "=== model ${name} ===" >>"${OUT_DIR}/perf.log"
+  set +e
+  env "$@" \
+    SUPERCOMBO_MAX_FRAMES="${frames}" \
+    RPI_SYNTHETIC=1 \
+    RPI_SYNTHETIC_FRAMES="${frames}" \
+    "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" \
+    >"${OUT_DIR}/perf_model_${name}.log" 2>&1
+  local rc=$?
+  set -e
+  tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}.log" | tail -n 12 >>"${OUT_DIR}/perf.log"
+  local fps
+  fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_model_${name}.log" |
+    sed -n 's/.*rpi_modeld synthetic done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+  echo "PERF model name=${name} rc=${rc} fps=${fps:-NA}" | tee -a "${OUT_DIR}/perf.log"
+  return "${rc}"
+}
+
+run_perf_manager_case() {
+  local name="$1"
+  shift
+  local seconds="${PERF_MANAGER_SEC:-5}"
+  echo "=== manager ${name} ===" >>"${OUT_DIR}/perf.log"
+  set +e
+  env "$@" \
+    RPI_CAMERA_SYNTHETIC="${RPI_CAMERA_SYNTHETIC:-1}" \
+    RPI_MANAGER_MAX_SEC="${seconds}" \
+    "${ROOT_DIR}/rpi_manager.py" "${MODEL_PARAM}" "${MODEL_BIN}" \
+    >"${OUT_DIR}/perf_manager_${name}.log" 2>&1
+  local rc=$?
+  set -e
+  tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" | tail -n 16 >>"${OUT_DIR}/perf.log"
+  local camera_fps model_fps overlay_frames
+  camera_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
+    sed -n 's/.*rpi_camerad done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+  model_fps="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
+    sed -n 's/.*rpi_modeld done frames=.* fps=\([0-9.]*\).*/\1/p' | tail -n 1)"
+  overlay_frames="$(tr '\r' '\n' <"${OUT_DIR}/perf_manager_${name}.log" |
+    sed -n 's/.*rpi_overlay done frames=\([0-9]*\).*/\1/p' | tail -n 1)"
+  echo "PERF manager name=${name} rc=${rc} camera_fps=${camera_fps:-NA} model_fps=${model_fps:-NA} overlay_frames=${overlay_frames:-NA}" | tee -a "${OUT_DIR}/perf.log"
+  return "${rc}"
+}
+
+run_perf_snapshot() {
+  require_file "${MODEL_PARAM}"
+  require_file "${MODEL_BIN}"
+  reset_outputs
+  cleanup_shm
+  append_system_perf_state
+
+  local rc=0
+  run_perf_model_case default || rc=1
+  run_perf_model_case threads3 RPI_NCNN_THREADS=3 || rc=1
+  run_perf_model_case input_bf16 RPI_NCNN_INPUT_BF16=1 || rc=1
+  run_perf_manager_case no_overlay RPI_RUN_OVERLAY=0 || rc=1
+  run_perf_manager_case overlay_headless_2fps RPI_RUN_OVERLAY=1 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 || rc=1
+  run_perf_manager_case overlay_fb_2fps RPI_RUN_OVERLAY=1 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 || rc=1
+
+  summarize_single perf "${rc}"
+  return "${rc}"
+}
+
 case "${MODE}" in
   model)
     run_model_only
@@ -356,8 +443,11 @@ case "${MODE}" in
   manager)
     run_manager
     ;;
+  perf)
+    run_perf_snapshot
+    ;;
   *)
-    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager}" >&2
+    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf}" >&2
     exit 2
     ;;
 esac
