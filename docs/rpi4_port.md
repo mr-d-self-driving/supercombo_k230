@@ -94,6 +94,7 @@ scripts/rpi_smoke.sh synthetic
 scripts/rpi_smoke.sh replay
 scripts/rpi_smoke.sh manager
 scripts/rpi_smoke.sh perf
+scripts/rpi_smoke.sh check
 ```
 
 The script writes logs to `/tmp/rpi_smoke` by default. Override paths with
@@ -136,6 +137,43 @@ outlier as a regression.
 The model-only default case is intentionally loose because it has shown larger
 standalone variance on this Pi. Treat the manager no-overlay and headless-overlay
 checks as the primary throughput gates.
+
+`check` is the camera-less aggregate gate for the current Pi setup. It runs:
+
+```text
+model
+camera synthetic
+synthetic pipeline with DUMP=1
+manager
+camera-replay, if REPLAY_NV12 exists
+replay with DUMP=1, if REPLAY_NV12 exists
+```
+
+It intentionally does not fail on the missing real camera path, and it does not
+run `perf` by default. Add `CHECK_WITH_CAMERA_PROBE=1` when you want the same run
+to record camera discovery state as an informational step. Add
+`CHECK_WITH_PERF=1` when you want the aggregate run to include the performance
+threshold snapshot. Each subtest writes to its own directory under
+`/tmp/rpi_smoke/check`, so the logs are safe to compare after the aggregate run.
+
+Useful bounds for shorter or longer checks:
+
+```text
+CHECK_CAMERA_FRAMES=30
+CHECK_MODEL_FRAMES=20
+CHECK_SYNTHETIC_CAMERA_FRAMES=120
+CHECK_SYNTHETIC_MODEL_FRAMES=12
+CHECK_SYNTHETIC_OVERLAY_FRAMES=5
+CHECK_CAMERA_REPLAY_FRAMES=30
+CHECK_REPLAY_CAMERA_FRAMES=120
+CHECK_REPLAY_MODEL_FRAMES=12
+CHECK_REPLAY_OVERLAY_FRAMES=5
+CHECK_MANAGER_SEC=5
+CHECK_INCLUDE_REPLAY=auto
+CHECK_WITH_PERF=0
+CHECK_PERF_MODEL_FRAMES=40
+CHECK_PERF_MANAGER_SEC=4
+```
 
 Pipeline smokes run `rpi_overlay` under `timeout` when GNU coreutils is
 available. Override the default 20 seconds with `OVERLAY_TIMEOUT_SEC=...`.

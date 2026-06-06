@@ -475,6 +475,123 @@ run_perf_snapshot() {
   return "${rc}"
 }
 
+run_check_step() {
+  local name="$1"
+  shift
+  local step_dir="${CHECK_OUT_DIR}/${name}"
+  mkdir -p "${step_dir}"
+  echo "CHECK_STEP name=${name} status=running logs=${step_dir}" | tee -a "${CHECK_OUT_DIR}/check.log"
+  set +e
+  (
+    OUT_DIR="${step_dir}"
+    DISPLAY_MODE=0
+    OVERLAY_FPS="${CHECK_OVERLAY_FPS:-2}"
+    unset RPI_CAMERA_SOURCE
+    "$@"
+  )
+  local rc=$?
+  set -e
+  local result="PASS"
+  if [[ "${rc}" -ne 0 ]]; then
+    result="FAIL"
+  fi
+  echo "CHECK_STEP name=${name} rc=${rc} result=${result} logs=${step_dir}" | tee -a "${CHECK_OUT_DIR}/check.log"
+  return "${rc}"
+}
+
+run_check_skip() {
+  local name="$1"
+  local reason="$2"
+  echo "CHECK_STEP name=${name} rc=0 result=SKIP reason=${reason}" | tee -a "${CHECK_OUT_DIR}/check.log"
+}
+
+run_check_model() {
+  MODEL_FRAMES="${CHECK_MODEL_FRAMES:-20}"
+  run_model_only
+}
+
+run_check_camera() {
+  CAMERA_FRAMES="${CHECK_CAMERA_FRAMES:-30}"
+  run_camera_only synthetic
+}
+
+run_check_camera_replay() {
+  CAMERA_FRAMES="${CHECK_CAMERA_REPLAY_FRAMES:-30}"
+  run_camera_only replay
+}
+
+run_check_synthetic() {
+  CAMERA_FRAMES="${CHECK_SYNTHETIC_CAMERA_FRAMES:-120}"
+  MODEL_FRAMES="${CHECK_SYNTHETIC_MODEL_FRAMES:-12}"
+  OVERLAY_FRAMES="${CHECK_SYNTHETIC_OVERLAY_FRAMES:-5}"
+  OVERLAY_TIMEOUT_SEC="${CHECK_OVERLAY_TIMEOUT_SEC:-15}"
+  DUMP="${CHECK_SYNTHETIC_DUMP:-1}"
+  run_pipeline synthetic
+}
+
+run_check_replay() {
+  CAMERA_FRAMES="${CHECK_REPLAY_CAMERA_FRAMES:-120}"
+  MODEL_FRAMES="${CHECK_REPLAY_MODEL_FRAMES:-12}"
+  OVERLAY_FRAMES="${CHECK_REPLAY_OVERLAY_FRAMES:-5}"
+  OVERLAY_TIMEOUT_SEC="${CHECK_OVERLAY_TIMEOUT_SEC:-15}"
+  DUMP="${CHECK_REPLAY_DUMP:-1}"
+  run_pipeline replay
+}
+
+run_check_manager() {
+  RPI_CAMERA_SYNTHETIC=1
+  RPI_MANAGER_MAX_SEC="${CHECK_MANAGER_SEC:-5}"
+  run_manager
+}
+
+run_check_perf() {
+  PERF_MODEL_FRAMES="${CHECK_PERF_MODEL_FRAMES:-40}"
+  PERF_MANAGER_SEC="${CHECK_PERF_MANAGER_SEC:-4}"
+  run_perf_snapshot
+}
+
+run_check_suite() {
+  require_file "${MODEL_PARAM}"
+  require_file "${MODEL_BIN}"
+
+  local base="${OUT_DIR}/check"
+  rm -rf "${base}"
+  mkdir -p "${base}"
+  CHECK_OUT_DIR="${base}"
+
+  local rc=0
+  run_check_step model run_check_model || rc=1
+  run_check_step camera run_check_camera || rc=1
+  run_check_step synthetic run_check_synthetic || rc=1
+  run_check_step manager run_check_manager || rc=1
+
+  local include_replay="${CHECK_INCLUDE_REPLAY:-auto}"
+  if [[ "${include_replay}" == "1" || ( "${include_replay}" == "auto" && -f "${REPLAY_NV12}" ) ]]; then
+    run_check_step camera_replay run_check_camera_replay || rc=1
+    run_check_step replay run_check_replay || rc=1
+  elif [[ "${include_replay}" == "auto" || "${include_replay}" == "0" ]]; then
+    run_check_skip replay "missing_or_disabled_replay"
+  else
+    echo "invalid CHECK_INCLUDE_REPLAY=${include_replay}; use auto, 0, or 1" >&2
+    rc=1
+  fi
+
+  if [[ "${CHECK_WITH_PERF:-0}" != "0" ]]; then
+    run_check_step perf run_check_perf || rc=1
+  fi
+
+  if [[ "${CHECK_WITH_CAMERA_PROBE:-0}" != "0" ]]; then
+    run_check_step camera_probe run_camera_probe || true
+  fi
+
+  local result="PASS"
+  if [[ "${rc}" -ne 0 ]]; then
+    result="FAIL"
+  fi
+  echo "SMOKE result=${result} mode=check rc=${rc} logs=${base}" | tee -a "${CHECK_OUT_DIR}/check.log"
+  return "${rc}"
+}
+
 case "${MODE}" in
   model)
     run_model_only
@@ -503,8 +620,11 @@ case "${MODE}" in
   perf)
     run_perf_snapshot
     ;;
+  check)
+    run_check_suite
+    ;;
   *)
-    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf}" >&2
+    echo "usage: $0 {model|camera|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac
