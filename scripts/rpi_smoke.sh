@@ -14,6 +14,7 @@ fi
 
 MODEL_PARAM="${MODEL_PARAM:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.param}"
 MODEL_BIN="${MODEL_BIN:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin}"
+NCNN_LIBRARY="${NCNN_LIBRARY:-/home/chan/onnx_bench/ncnn-build-a72-no82/src/libncnn.a}"
 REPLAY_NV12="${REPLAY_NV12:-/home/chan/supercombo_models/replay_120.scnv12}"
 OUT_DIR="${OUT_DIR:-/tmp/rpi_smoke}"
 DISPLAY_MODE="${RPI_DISPLAY:-0}"
@@ -27,6 +28,7 @@ reset_outputs() {
         "${OUT_DIR}/model.log" \
         "${OUT_DIR}/overlay.log" \
         "${OUT_DIR}/manager.log" \
+        "${OUT_DIR}/artifacts.log" \
         "${OUT_DIR}/parity.log" \
         "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
@@ -230,6 +232,15 @@ summarize_single() {
       emit_profile_metric "${OUT_DIR}/model.log" || check_rc=1
       validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
       ;;
+    artifacts)
+      print_matches artifacts "${OUT_DIR}/artifacts.log" 'ARTIFACT'
+      if ! grep -q 'ARTIFACT_CHECK result=PASS' "${OUT_DIR}/artifacts.log"; then
+        echo "SMOKE_CHECK component=artifacts result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=artifacts result=PASS"
+      fi
+      ;;
     parity)
       print_matches parity "${OUT_DIR}/parity.log" 'PREPROCESS_PARITY|IPC_ABI|NCNN_OUTPUT_CONTRACT|verify_calibration_equivalence'
       if ! grep -q 'PREPROCESS_PARITY result=PASS' "${OUT_DIR}/parity.log"; then
@@ -311,6 +322,65 @@ require_executable() {
     echo "missing executable: ${path} (ROOT_DIR=${ROOT_DIR}, set RPI_RUNTIME_DIR=/path/to/runtime if needed)" >&2
     exit 2
   fi
+}
+
+file_size() {
+  local path="$1"
+  if stat -c '%s' "${path}" >/dev/null 2>&1; then
+    stat -c '%s' "${path}"
+  else
+    stat -f '%z' "${path}"
+  fi
+}
+
+hash_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null; then
+    sha256sum "${path}" | awk '{print $1}'
+  elif command -v shasum >/dev/null; then
+    shasum -a 256 "${path}" | awk '{print $1}'
+  else
+    echo "NA"
+    return 1
+  fi
+}
+
+report_artifact_file() {
+  local kind="$1"
+  local path="$2"
+  if [[ ! -f "${path}" ]]; then
+    echo "ARTIFACT kind=${kind} result=missing path=${path}"
+    return 1
+  fi
+  local bytes sha
+  bytes="$(file_size "${path}")"
+  sha="$(hash_file "${path}")"
+  echo "ARTIFACT kind=${kind} result=ok bytes=${bytes} sha256=${sha} path=${path}"
+}
+
+run_artifact_report() {
+  reset_outputs
+  local rc=0
+  {
+    echo "ARTIFACT_ROOT root=${ROOT_DIR}"
+    report_artifact_file model_param "${MODEL_PARAM}" || rc=1
+    report_artifact_file model_bin "${MODEL_BIN}" || rc=1
+    report_artifact_file ncnn_lib "${NCNN_LIBRARY}" || rc=1
+    report_artifact_file binary_rpi_modeld "${ROOT_DIR}/rpi_modeld" || rc=1
+    report_artifact_file binary_rpi_camerad "${ROOT_DIR}/rpi_camerad" || rc=1
+    report_artifact_file binary_rpi_overlay "${ROOT_DIR}/rpi_overlay" || rc=1
+    if command -v pkg-config >/dev/null && pkg-config --exists opencv4; then
+      echo "ARTIFACT_TOOL kind=opencv4 version=$(pkg-config --modversion opencv4)"
+    else
+      echo "ARTIFACT_TOOL kind=opencv4 version=missing"
+    fi
+    if [[ "${rc}" -eq 0 ]]; then
+      echo "ARTIFACT_CHECK result=PASS"
+    else
+      echo "ARTIFACT_CHECK result=FAIL"
+    fi
+  } > >(tee "${OUT_DIR}/artifacts.log") 2>&1
+  summarize_single artifacts "${rc}"
 }
 
 probe_v4l2_nodes() {
@@ -854,6 +924,13 @@ append_check_step_summary() {
   local step_dir="$2"
   {
     case "${name}" in
+      artifacts)
+        if [[ -f "${step_dir}/artifacts.log" ]]; then
+          tr '\r' '\n' <"${step_dir}/artifacts.log" |
+            grep -E '^ARTIFACT' |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
+        ;;
       model)
         check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='
         ;;
@@ -911,6 +988,10 @@ run_check_skip() {
 run_check_model() {
   MODEL_FRAMES="${CHECK_MODEL_FRAMES:-20}"
   run_model_only
+}
+
+run_check_artifacts() {
+  run_artifact_report
 }
 
 run_check_parity() {
@@ -980,6 +1061,9 @@ run_check_suite() {
   CHECK_OUT_DIR="${base}"
 
   local rc=0
+  if [[ "${CHECK_WITH_ARTIFACTS:-1}" != "0" ]]; then
+    run_check_step artifacts run_check_artifacts || rc=1
+  fi
   if [[ "${CHECK_WITH_PARITY:-1}" != "0" ]]; then
     run_check_step parity run_check_parity || rc=1
   fi
@@ -1029,6 +1113,9 @@ run_check_suite() {
 }
 
 case "${MODE}" in
+  artifacts)
+    run_artifact_report
+    ;;
   model)
     run_model_only
     ;;
@@ -1069,7 +1156,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {model|profile|parity|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {artifacts|model|profile|parity|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac

@@ -111,6 +111,7 @@ The common smoke commands are wrapped in:
 ```sh
 scripts/rpi_smoke.sh model
 scripts/rpi_smoke.sh profile
+scripts/rpi_smoke.sh artifacts
 scripts/rpi_smoke.sh parity
 scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
@@ -151,6 +152,17 @@ SMOKE_REQUIRE_OVERLAY_MODEL=1
 
 Raise these only when the Pi is in a stable performance test setup. Use `perf`
 for the stricter throughput snapshot.
+
+`artifacts` records the exact files used by runtime/performance checks:
+
+```text
+ARTIFACT kind=model_param result=ok bytes=23303 sha256=e3c588c... path=...
+ARTIFACT kind=model_bin result=ok bytes=58389784 sha256=88dc469... path=...
+ARTIFACT kind=ncnn_lib result=ok bytes=5633466 sha256=146cbec... path=...
+ARTIFACT_CHECK result=PASS
+```
+
+The default aggregate `check` runs this first unless `CHECK_WITH_ARTIFACTS=0`.
 
 `profile` runs `rpi_modeld` with `RPI_PROFILE_MODEL=1` and prints a single
 `PROFILE_METRIC` line with average per-frame timing:
@@ -232,6 +244,7 @@ checks as the primary throughput gates.
 `check` is the camera-less aggregate gate for the current Pi setup. It runs:
 
 ```text
+artifacts
 parity
 model
 camera synthetic
@@ -260,6 +273,7 @@ Useful bounds for shorter or longer checks:
 ```text
 CHECK_CAMERA_FRAMES=30
 CHECK_MODEL_FRAMES=20
+CHECK_WITH_ARTIFACTS=1
 CHECK_INCLUDE_CAMERA_FILE=auto
 CHECK_CAMERA_FILE_FRAMES=30
 CHECK_CAMERA_FILE_SOURCE_FRAMES=60
@@ -451,6 +465,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS`, camera `39.36 fps`, camera-file `61.96 fps`, synthetic pipeline camera `30.24 fps`, model `12.97 fps`, overlay consumed `model_seq=6`, profile total `59.41 ms` |
 | post-ncnn-contract short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS` including `NCNN_OUTPUT_CONTRACT`, camera `39.42 fps`, camera-file `76.84 fps`, synthetic pipeline camera `30.43 fps`, model `9.99 fps`, overlay consumed `model_seq=6`, profile total `68.77 ms` |
 | install-tree `scripts/rpi_smoke.sh parity` and short `check` from `/tmp/supercombo_k230_rpi_install_test` | parity `PASS`, synthetic pipeline camera `29.83 fps`, model `11.32 fps`, manager camera `29.25 fps` / model `12.45 fps`, profile total `67.73 ms`; installed `rpi_*` paths used |
+| install-tree `scripts/rpi_smoke.sh artifacts` | `PASS`; model param sha256 `e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2`, model bin sha256 `88dc46956eb5255265c9695a29dc4fba7ec6e419e5af26de137df756c3ec277b`, ncnn lib sha256 `146cbec8f846e9d51b0c5f63dc2f5aba031804f3c8fc67677012c1455f1ef9ed` |
+| install-tree short `scripts/rpi_smoke.sh check` with artifacts/parity/profile | artifacts `PASS`, parity `PASS`, camera `39.46 fps`, camera-file `85.17 fps`, synthetic pipeline camera `29.71 fps`, model `11.25 fps`, overlay consumed `model_seq=6`, manager camera `29.29 fps` / model `14.35 fps`, profile total `69.27 ms` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 | manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
