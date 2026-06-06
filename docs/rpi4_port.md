@@ -165,10 +165,11 @@ ARTIFACT_CHECK result=PASS
 The default aggregate `check` runs this first unless `CHECK_WITH_ARTIFACTS=0`.
 
 `profile` runs `rpi_modeld` with `RPI_PROFILE_MODEL=1` and prints a single
-`PROFILE_METRIC` line with average per-frame timing:
+`PROFILE_METRIC` line with average per-frame timing plus spike-oriented
+`p95`/`max` latency:
 
 ```text
-PROFILE_METRIC mode=synthetic frames=40 total_ms=... warp_ms=... input_ms=... infer_ms=... output_ms=...
+PROFILE_METRIC mode=synthetic frames=40 total_ms=... warp_ms=... input_ms=... infer_ms=... output_ms=... p95_total_ms=... p95_infer_ms=... max_total_ms=... max_infer_ms=...
 ```
 
 Use `PROFILE_MODEL_FRAMES=...` for longer samples, or `CHECK_WITH_PROFILE=1`
@@ -494,6 +495,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | post-camera-bound model-only sweep, 120 frames | default float input `10.97 fps`, `RPI_NCNN_INPUT_BF16=1` `18.45 fps`, `RPI_NCNN_THREADS=3` `16.62 fps`, `RPI_NCNN_THREADS=3 RPI_NCNN_INPUT_BF16=1` `16.57 fps`, throttled `0x0` |
 | post-camera-bound manager no-overlay comparison, 8 sec | default float input camera/model `28.94 / 13.00 fps`; `RPI_NCNN_INPUT_BF16=1` camera/model `29.17 / 14.88 fps`, throttled `0x0` |
 | follow-up 120-frame profile, explicit input mode comparison | `RPI_NCNN_INPUT_BF16=1`: `12.30 fps`, avg total `80.61 ms`, infer `76.29 ms`; `RPI_NCNN_INPUT_BF16=0`: `18.45 fps`, avg total `53.79 ms`, infer `51.10 ms`; throttled `0x0` |
+| profile percentile smoke, 40 frames | `PROFILE_METRIC` includes `p95/max`; avg total `89.82 ms`, avg infer `86.48 ms`, p95 total/infer `275.75 / 272.88 ms`, max total/infer `287.52 / 284.64 ms`, throttled `0x0`; `rpi_modeld` sha256 `02780b39655c179bdae0f248cc7e5d9972f9aa962898346ddaac032df7ea1b5d` |
+| short `scripts/rpi_smoke.sh check` with percentile profile | artifacts/parity/profile `PASS`, camera `39.10 fps`, camera-file `99.41 fps`, synthetic pipeline camera/model `29.72 / 11.05 fps`, manager camera/model `29.57 / 14.60 fps`, profile p95 total/infer `78.87 / 68.28 ms`, max total/infer `99.10 / 96.20 ms` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.

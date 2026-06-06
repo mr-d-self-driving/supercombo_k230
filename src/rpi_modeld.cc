@@ -34,6 +34,10 @@ struct TimingStats {
     double infer_ms = 0.0;
     double output_ms = 0.0;
     double total_ms = 0.0;
+    float max_total_ms = 0.0f;
+    float max_infer_ms = 0.0f;
+    std::vector<float> total_samples;
+    std::vector<float> infer_samples;
 
     void add(const NcnnSupercomboModel::RunTiming &timing)
     {
@@ -43,6 +47,20 @@ struct TimingStats {
         infer_ms += timing.infer_ms;
         output_ms += timing.output_ms;
         total_ms += timing.total_ms;
+        max_total_ms = std::max(max_total_ms, timing.total_ms);
+        max_infer_ms = std::max(max_infer_ms, timing.infer_ms);
+        total_samples.push_back(timing.total_ms);
+        infer_samples.push_back(timing.infer_ms);
+    }
+
+    static float percentile(std::vector<float> samples, float percentile_value)
+    {
+        if (samples.empty()) return 0.0f;
+        std::sort(samples.begin(), samples.end());
+        const float clamped = std::max(0.0f, std::min(100.0f, percentile_value));
+        const size_t index = static_cast<size_t>(
+            (clamped / 100.0f) * static_cast<float>(samples.size() - 1));
+        return samples[index];
     }
 
     void print(const char *mode) const
@@ -50,9 +68,12 @@ struct TimingStats {
         if (count == 0) return;
         const double scale = 1.0 / static_cast<double>(count);
         std::fprintf(stderr,
-                     "rpi_modeld profile mode=%s frames=%u avg_ms total=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f\n",
+                     "rpi_modeld profile mode=%s frames=%u avg_ms total=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f "
+                     "p95_total=%.2f p95_infer=%.2f max_total=%.2f max_infer=%.2f\n",
                      mode, count, total_ms * scale, warp_ms * scale, input_ms * scale,
-                     infer_ms * scale, output_ms * scale);
+                     infer_ms * scale, output_ms * scale,
+                     percentile(total_samples, 95.0f), percentile(infer_samples, 95.0f),
+                     max_total_ms, max_infer_ms);
     }
 };
 

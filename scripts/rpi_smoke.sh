@@ -58,7 +58,16 @@ last_log_line() {
 field_from_line() {
   local line="$1"
   local key="$2"
-  sed -n "s/.*${key}=\([^ ]*\).*/\1/p" <<<"${line}"
+  awk -v key="${key}" '{
+    for (i = 1; i <= NF; ++i) {
+      split($i, parts, "=")
+      if (parts[1] == key) {
+        sub("^[^=]*=", "", $i)
+        print $i
+        exit
+      }
+    }
+  }' <<<"${line}"
 }
 
 number_ge() {
@@ -140,7 +149,7 @@ emit_profile_metric() {
     echo "PROFILE_METRIC result=missing log=${path}"
     return 1
   fi
-  local mode frames total warp input infer output
+  local mode frames total warp input infer output p95_total p95_infer max_total max_infer
   mode="$(field_from_line "${line}" mode)"
   frames="$(field_from_line "${line}" frames)"
   total="$(field_from_line "${line}" total)"
@@ -148,7 +157,11 @@ emit_profile_metric() {
   input="$(field_from_line "${line}" input)"
   infer="$(field_from_line "${line}" infer)"
   output="$(field_from_line "${line}" output)"
-  echo "PROFILE_METRIC mode=${mode:-NA} frames=${frames:-NA} total_ms=${total:-NA} warp_ms=${warp:-NA} input_ms=${input:-NA} infer_ms=${infer:-NA} output_ms=${output:-NA}"
+  p95_total="$(field_from_line "${line}" p95_total)"
+  p95_infer="$(field_from_line "${line}" p95_infer)"
+  max_total="$(field_from_line "${line}" max_total)"
+  max_infer="$(field_from_line "${line}" max_infer)"
+  echo "PROFILE_METRIC mode=${mode:-NA} frames=${frames:-NA} total_ms=${total:-NA} warp_ms=${warp:-NA} input_ms=${input:-NA} infer_ms=${infer:-NA} output_ms=${output:-NA} p95_total_ms=${p95_total:-NA} p95_infer_ms=${p95_infer:-NA} max_total_ms=${max_total:-NA} max_infer_ms=${max_infer:-NA}"
   return 0
 }
 
