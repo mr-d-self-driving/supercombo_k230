@@ -291,13 +291,16 @@ headless/no-overlay.
 
 - RPi OpenCV capture can change FOV, chroma siting, color range, lens
   distortion, and exposure behavior relative to K230 hardware capture.
-- `rpi_camerad` crop metadata is currently validation metadata only. Fix it
-  before using it in calibration, logging provenance, or replay comparison.
+- `rpi_camerad` crop metadata now has a smoke gate for synthetic, replay, and
+  camera-file paths. Real-camera crop/FOV still needs validation with the
+  intended camera attached.
 - The current RPi overlay reads the AI ring for display, unlike K230 preview.
   This is acceptable for validation, but it can hide display-specific K230
   issues.
-- The exact `ncnnoptimize` invocation for the current deploy pair must be
-  recorded before a clean rebuild can be considered reproducible.
+- Current model hashes, source ONNX hashes, ncnn source revision, and conversion
+  flow are recorded in `docs/rpi4_model_provenance.md`. A byte-identical clean
+  rebuild is still unproven because the historical `ncnnoptimize` flag was not
+  logged and must be tested against the recorded hashes.
 - BF16 input conversion has shown mixed results between artifact-level and
   repo-level smokes, so both default float input and `RPI_NCNN_INPUT_BF16=1`
   should remain in performance checks until the result is stable.

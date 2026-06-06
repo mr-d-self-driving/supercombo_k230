@@ -14,7 +14,10 @@ fi
 
 MODEL_PARAM="${MODEL_PARAM:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.param}"
 MODEL_BIN="${MODEL_BIN:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin}"
+MODEL_NO_BIG_ONNX="${MODEL_NO_BIG_ONNX:-/home/chan/onnx_bench/supercombo_no_big_drop.onnx}"
+MODEL_SOURCE_ONNX="${MODEL_SOURCE_ONNX:-/home/chan/onnx_bench/supercombo_no_big_drop_pruned_viz.onnx}"
 NCNN_LIBRARY="${NCNN_LIBRARY:-/home/chan/onnx_bench/ncnn-build-a72-no82/src/libncnn.a}"
+NCNN_SOURCE_DIR="${NCNN_SOURCE_DIR:-/home/chan/onnx_bench/ncnn-src}"
 REPLAY_NV12="${REPLAY_NV12:-/home/chan/supercombo_models/replay_120.scnv12}"
 OUT_DIR="${OUT_DIR:-/tmp/rpi_smoke}"
 DISPLAY_MODE="${RPI_DISPLAY:-0}"
@@ -469,14 +472,44 @@ report_artifact_file() {
   echo "ARTIFACT kind=${kind} result=ok bytes=${bytes} sha256=${sha} path=${path}"
 }
 
+report_optional_artifact_file() {
+  local kind="$1"
+  local path="$2"
+  if [[ ! -f "${path}" ]]; then
+    echo "ARTIFACT kind=${kind} result=missing optional=1 path=${path}"
+    return 0
+  fi
+  report_artifact_file "${kind}" "${path}"
+}
+
+report_git_head() {
+  local kind="$1"
+  local path="$2"
+  if [[ ! -d "${path}/.git" ]] || ! command -v git >/dev/null; then
+    echo "ARTIFACT_GIT kind=${kind} result=missing optional=1 path=${path}"
+    return 0
+  fi
+  local head desc
+  head="$(git -C "${path}" rev-parse HEAD 2>/dev/null || true)"
+  desc="$(git -C "${path}" describe --tags --always --dirty 2>/dev/null || true)"
+  if [[ -z "${head}" ]]; then
+    echo "ARTIFACT_GIT kind=${kind} result=missing optional=1 path=${path}"
+    return 0
+  fi
+  echo "ARTIFACT_GIT kind=${kind} result=ok head=${head} describe=${desc:-NA} path=${path}"
+}
+
 run_artifact_report() {
   reset_outputs
   local rc=0
   {
     echo "ARTIFACT_ROOT root=${ROOT_DIR}"
+    report_optional_artifact_file model_no_big_onnx "${MODEL_NO_BIG_ONNX}"
+    report_optional_artifact_file model_source_onnx "${MODEL_SOURCE_ONNX}"
     report_artifact_file model_param "${MODEL_PARAM}" || rc=1
     report_artifact_file model_bin "${MODEL_BIN}" || rc=1
     report_artifact_file ncnn_lib "${NCNN_LIBRARY}" || rc=1
+    report_git_head ncnn_source "${NCNN_SOURCE_DIR}"
     report_artifact_file binary_rpi_modeld "${ROOT_DIR}/rpi_modeld" || rc=1
     report_artifact_file binary_rpi_camerad "${ROOT_DIR}/rpi_camerad" || rc=1
     report_artifact_file binary_rpi_overlay "${ROOT_DIR}/rpi_overlay" || rc=1

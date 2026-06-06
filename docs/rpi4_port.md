@@ -95,6 +95,10 @@ Use the pruned visualization ncnn pair:
 /home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin
 ```
 
+Model provenance, source ONNX hashes, ncnn source revision, and the current
+known gap around the historical `ncnnoptimize` flag are recorded in
+[`rpi4_model_provenance.md`](rpi4_model_provenance.md).
+
 This model outputs:
 
 ```text
@@ -160,6 +164,8 @@ for the stricter throughput snapshot.
 ARTIFACT kind=model_param result=ok bytes=23303 sha256=e3c588c... path=...
 ARTIFACT kind=model_bin result=ok bytes=58389784 sha256=88dc469... path=...
 ARTIFACT kind=ncnn_lib result=ok bytes=5633466 sha256=146cbec... path=...
+ARTIFACT kind=model_source_onnx result=ok bytes=58988170 sha256=60963ef... path=...
+ARTIFACT_GIT kind=ncnn_source result=ok head=882f319... describe=882f319 path=...
 ARTIFACT_CHECK result=PASS
 ```
 
@@ -524,6 +530,7 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `perf` with steady FPS, 60 frames / 4 sec | model default raw/steady `11.24 / 11.34 fps`, threads3 `12.96 / 13.96 fps`, input_bf16 `15.42 / 18.56 fps`; manager no_overlay camera/model/steady `29.32 / 18.46 / 18.41 fps`, headless overlay `29.26 / 16.32 / 16.23 fps`, fb overlay `29.10 / 15.61 / 15.55 fps`; all default `PERF_CHECK` gates `PASS`, throttled `0x0` |
 | frame metadata smoke | synthetic 6 frames `35.58 fps`, replay 6 frames `35.41 fps`, both `FRAME_METADATA result=PASS` with crop `0,0,512,256`; camera-file fixture 6 frames `79.56 fps`, `FRAME_METADATA result=PASS` with crop `0,0,1024,512`; throttled `0x0` |
 | short `scripts/rpi_smoke.sh check` with frame metadata gate | artifacts/parity/profile `PASS`; `binary_check_frame_metadata` sha256 `ab0b6653f16c444a03544c01203f5d8366d55286b5b929f5dd077e686fc0b6f3`; camera `39.39 fps` metadata crop `0,0,512,256`; camera-file `92.62 fps` metadata crop `0,0,1024,512`; synthetic pipeline camera/model `29.82 / 12.66 fps`; manager camera/model `29.18 / 14.14 fps`; profile p95 total/infer `63.09 / 60.15 ms`; throttled `0x0` |
+| model provenance artifact smoke | `ARTIFACT_CHECK result=PASS`; no-big ONNX sha256 `e912010c4f1d045d9915a4fe57690682d89c6db7d0256fedc0f54c28546c98de`; pruned-viz ONNX sha256 `60963ef873ed6769ba89d6e52938801abb41662a7ff7d30e57abc9deb4db33a3`; deploy param/bin sha256 `e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2` / `88dc46956eb5255265c9695a29dc4fba7ec6e419e5af26de137df756c3ec277b`; ncnn source head `882f319defcdd29440eabff7bc6e493c913f29e7`; throttled `0x0` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
