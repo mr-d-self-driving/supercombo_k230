@@ -26,6 +26,70 @@ CAMERA_FPS="${RPI_CAMERA_FPS:-30}"
 
 mkdir -p "${OUT_DIR}"
 
+CPU_GOVERNOR_PATHS=()
+CPU_GOVERNOR_ORIGINALS=()
+CPU_GOVERNOR_APPLIED=0
+
+write_cpu_governor() {
+  local path="$1"
+  local value="$2"
+  if [[ -w "${path}" ]]; then
+    echo "${value}" >"${path}"
+    return 0
+  fi
+  if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    sudo sh -c 'printf "%s\n" "$1" > "$2"' sh "${value}" "${path}"
+    return 0
+  fi
+  return 1
+}
+
+apply_cpu_governor() {
+  local requested="${RPI_SMOKE_CPU_GOVERNOR:-}"
+  [[ -n "${requested}" ]] || return 0
+
+  local path found=0
+  for path in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    [[ -e "${path}" ]] || continue
+    found=1
+  done
+  if [[ "${found}" -eq 0 ]]; then
+    echo "CPU_GOVERNOR result=FAIL reason=no_cpufreq requested=${requested}" >&2
+    return 1
+  fi
+
+  CPU_GOVERNOR_PATHS=()
+  CPU_GOVERNOR_ORIGINALS=()
+  for path in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    [[ -e "${path}" ]] || continue
+    CPU_GOVERNOR_PATHS+=("${path}")
+    CPU_GOVERNOR_ORIGINALS+=("$(cat "${path}")")
+  done
+  CPU_GOVERNOR_APPLIED=1
+  for path in "${CPU_GOVERNOR_PATHS[@]}"; do
+    if ! write_cpu_governor "${path}" "${requested}"; then
+      echo "CPU_GOVERNOR result=FAIL reason=permission path=${path} requested=${requested}" >&2
+      echo "Run sudo -v first or set the governor outside the smoke wrapper." >&2
+      restore_cpu_governor
+      return 1
+    fi
+  done
+  echo "CPU_GOVERNOR result=APPLIED requested=${requested} cpus=${#CPU_GOVERNOR_PATHS[@]}"
+}
+
+restore_cpu_governor() {
+  [[ "${CPU_GOVERNOR_APPLIED}" -eq 1 ]] || return 0
+  local idx path value
+  for idx in "${!CPU_GOVERNOR_PATHS[@]}"; do
+    path="${CPU_GOVERNOR_PATHS[${idx}]}"
+    value="${CPU_GOVERNOR_ORIGINALS[${idx}]}"
+    [[ -e "${path}" ]] || continue
+    write_cpu_governor "${path}" "${value}" || true
+  done
+  CPU_GOVERNOR_APPLIED=0
+  echo "CPU_GOVERNOR result=RESTORED cpus=${#CPU_GOVERNOR_PATHS[@]}"
+}
+
 reset_outputs() {
   rm -f "${OUT_DIR}/camera.log" \
         "${OUT_DIR}/model.log" \
@@ -1492,57 +1556,70 @@ run_check_suite() {
   return "${rc}"
 }
 
-case "${MODE}" in
-  artifacts)
-    run_artifact_report
-    ;;
-  model)
-    run_model_only
-    ;;
-  profile)
-    run_profile_snapshot
-    ;;
-  parity)
-    run_parity_checks
-    ;;
-  compare-input)
-    run_input_bf16_compare
-    ;;
-  camera)
-    run_camera_only synthetic
-    ;;
-  camera-replay)
-    run_camera_only replay
-    ;;
-  camera-file)
-    run_camera_only file
-    ;;
-  camera-real)
-    run_camera_only real
-    ;;
-  camera-rpicam-pipe)
-    run_camera_only rpicam-pipe
-    ;;
-  camera-probe)
-    run_camera_probe
-    ;;
-  synthetic)
-    run_pipeline synthetic
-    ;;
-  replay)
-    run_pipeline replay
-    ;;
-  manager)
-    run_manager
-    ;;
-  perf)
-    run_perf_snapshot
-    ;;
-  check)
-    run_check_suite
-    ;;
-  *)
-    echo "usage: $0 {artifacts|model|profile|parity|compare-input|camera|camera-file|camera-replay|camera-real|camera-rpicam-pipe|camera-probe|synthetic|replay|manager|perf|check}" >&2
-    exit 2
-    ;;
-esac
+main() {
+  case "${MODE}" in
+    artifacts)
+      run_artifact_report
+      ;;
+    model)
+      run_model_only
+      ;;
+    profile)
+      run_profile_snapshot
+      ;;
+    parity)
+      run_parity_checks
+      ;;
+    compare-input)
+      run_input_bf16_compare
+      ;;
+    camera)
+      run_camera_only synthetic
+      ;;
+    camera-replay)
+      run_camera_only replay
+      ;;
+    camera-file)
+      run_camera_only file
+      ;;
+    camera-real)
+      run_camera_only real
+      ;;
+    camera-rpicam-pipe)
+      run_camera_only rpicam-pipe
+      ;;
+    camera-probe)
+      run_camera_probe
+      ;;
+    synthetic)
+      run_pipeline synthetic
+      ;;
+    replay)
+      run_pipeline replay
+      ;;
+    manager)
+      run_manager
+      ;;
+    perf)
+      run_perf_snapshot
+      ;;
+    check)
+      run_check_suite
+      ;;
+    *)
+      echo "usage: $0 {artifacts|model|profile|parity|compare-input|camera|camera-file|camera-replay|camera-real|camera-rpicam-pipe|camera-probe|synthetic|replay|manager|perf|check}" >&2
+      return 2
+      ;;
+  esac
+}
+
+apply_cpu_governor
+set +e
+(
+  set -e
+  main
+)
+main_rc=$?
+set -e
+restore_cpu_governor
+exit "${main_rc}"

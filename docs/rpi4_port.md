@@ -198,6 +198,24 @@ PROFILE_MAX_P95_INFER_MS=140
 
 Set either max threshold to `0` to report the metric without failing on it.
 
+For performance-focused runs, the smoke wrapper can temporarily switch the CPU
+governor and restore it before exit:
+
+```sh
+sudo -v
+RPI_SMOKE_CPU_GOVERNOR=performance \
+  PROFILE_MODEL_FRAMES=50 \
+  scripts/rpi_smoke.sh profile
+```
+
+The option is intentionally disabled by default. It requires write permission to
+`/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor`, so run `sudo -v`
+first or set the governor externally before the smoke. Do not run the whole
+smoke wrapper through `sudo` unless you also clean up `/dev/shm/k230_*`; root-run
+smokes can leave shared-memory IPC files with the wrong owner. The wrapper
+prints `CPU_GOVERNOR result=APPLIED` and `CPU_GOVERNOR result=RESTORED` when
+the temporary change succeeds.
+
 `parity` runs the deterministic contract checks that do not require a camera or
 ncnn inference:
 
@@ -572,6 +590,11 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | latest camera-source regression after rpicam source addition | synthetic `30.76 fps`, replay `30.57 fps`; both `FRAME_METADATA result=PASS`; camera-file path previously remained valid at `94.46 fps` |
 | `scripts/rpi_smoke.sh camera-rpicam-pipe` | rpicam YUV420 stdout ingest path `PASS`; `29.14 fps` standalone, metadata `512x256 NV12` crop `0,0,512,256`, errors `0` |
 | short aggregate `scripts/rpi_smoke.sh check` including rpicam pipe | artifacts/parity/model/camera/camera-file/rpicam-pipe/synthetic/manager `PASS`; rpicam pipe `29.52 fps`, synthetic pipeline camera/model `29.95 / 11.84 fps`, manager camera/model `29.01 / 12.75 fps`; replay skipped with `CHECK_INCLUDE_REPLAY=0` |
+| latest `CHECK_WITH_PROFILE=1 scripts/rpi_smoke.sh check` | functional paths `PASS`, including rpicam pipe `29.41 fps`, synthetic camera/model `29.73 / 13.09 fps`, manager camera/model `29.22 / 13.34 fps`, replay camera/model `29.76 / 14.38 fps`; overall `FAIL` because one profile sample hit p95 total/infer `293.62 / 290.36 ms` |
+| immediate profile retry, ondemand governor | `PASS`; 50 frames with warmup `10`, avg total/infer `75.12 / 71.87 ms`, p95 total/infer `80.12 / 76.92 ms`, max total/infer `190.76 / 187.42 ms`, model `13.03 fps`, throttled `0x0` |
+| temporary `performance` governor profile | `PASS`; 50 frames with warmup `10`, avg total/infer `52.89 / 50.43 ms`, p95 total/infer `53.81 / 51.33 ms`, max total/infer `121.88 / 119.38 ms`, model `18.88 fps`; governor restored to `ondemand` |
+| `RPI_SMOKE_CPU_GOVERNOR=performance CHECK_WITH_PROFILE=1 scripts/rpi_smoke.sh check` | `PASS`; model-only `19.68 fps`, rpicam pipe `29.81 fps`, synthetic camera/model `29.77 / 16.55 fps`, manager camera/model `29.29 / 18.41 fps`, replay camera/model `29.69 / 16.26 fps`, profile p95 total/infer `53.21 / 50.78 ms`; governor restored to `ondemand` |
+| `RPI_SMOKE_CPU_GOVERNOR=performance scripts/rpi_smoke.sh perf` | `PASS`; default model `13.85 fps`, threads3 `17.05 fps`, input_bf16 `19.40 fps`; manager no-overlay camera/model `29.31 / 19.05 fps`, headless overlay `29.21 / 18.84 fps`, fb overlay `29.24 / 18.43 fps`; governor restored to `ondemand` |
 | latest `scripts/rpi_smoke.sh camera-probe` | `CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0 rpicam_candidates=0`; only Raspberry Pi codec/ISP helper `/dev/video*` nodes were visible; UVC camera failed USB enumeration with descriptor read errors `-32` and address errors `-71`; `rpicam-vid --list-cameras` reported no CSI/libcamera cameras |
 | forced `RPI_CAMERA_SOURCE=csi scripts/rpi_smoke.sh camera-real` with no CSI camera | bounded failure after `RPI_CAMERA_MAX_READ_ERRORS=2`; `rpicam-vid` reported `no cameras available`, frames `0`, errors `2` |
 
