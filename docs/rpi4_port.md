@@ -187,6 +187,9 @@ to record camera discovery state as an informational step. Add
 `CHECK_WITH_PERF=1` when you want the aggregate run to include the performance
 threshold snapshot. Each subtest writes to its own directory under
 `/tmp/rpi_smoke/check`, so the logs are safe to compare after the aggregate run.
+The top-level `/tmp/rpi_smoke/check/check.log` also gets `CHECK_METRIC` summary
+lines for each subtest, so a quick regression scan does not require opening
+every component log.
 Each `check` subtest forces the camera-less/headless path by clearing camera
 source/replay/display override env vars and setting `RPI_DISPLAY=0`,
 `RPI_RUN_OVERLAY=1`, and `RPI_CLEAR_SHM=1`.

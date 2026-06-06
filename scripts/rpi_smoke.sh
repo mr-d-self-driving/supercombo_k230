@@ -732,8 +732,70 @@ run_check_step() {
   if [[ "${rc}" -ne 0 ]]; then
     result="FAIL"
   fi
+  append_check_step_summary "${name}" "${step_dir}"
   echo "CHECK_STEP name=${name} rc=${rc} result=${result} logs=${step_dir}" | tee -a "${CHECK_OUT_DIR}/check.log"
   return "${rc}"
+}
+
+check_metric_from_log() {
+  local step="$1"
+  local component="$2"
+  local path="$3"
+  local pattern="$4"
+
+  local line
+  if ! line="$(last_log_line "${path}" "${pattern}")"; then
+    echo "CHECK_METRIC step=${step} component=${component} result=missing log=${path}"
+    return 0
+  fi
+
+  local frames errors fps missed model_seq have_model
+  frames="$(field_from_line "${line}" frames)"
+  errors="$(field_from_line "${line}" errors)"
+  fps="$(field_from_line "${line}" fps)"
+  missed="$(field_from_line "${line}" missed)"
+  model_seq="$(field_from_line "${line}" model_seq)"
+  have_model="$(field_from_line "${line}" have_model)"
+  echo "CHECK_METRIC step=${step} component=${component} frames=${frames:-NA} missed=${missed:-NA} errors=${errors:-NA} fps=${fps:-NA} model_seq=${model_seq:-NA} have_model=${have_model:-NA}"
+}
+
+append_check_step_summary() {
+  local name="$1"
+  local step_dir="$2"
+  {
+    case "${name}" in
+      model)
+        check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='
+        ;;
+      camera|camera_file|camera_replay|camera_real)
+        check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
+        ;;
+      synthetic|replay)
+        check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
+        check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld (synthetic )?done frames='
+        check_metric_from_log "${name}" overlay "${step_dir}/overlay.log" 'rpi_overlay done frames='
+        ;;
+      manager)
+        check_metric_from_log "${name}" camera "${step_dir}/manager.log" 'rpi_camerad done frames='
+        check_metric_from_log "${name}" model "${step_dir}/manager.log" 'rpi_modeld done frames='
+        check_metric_from_log "${name}" overlay "${step_dir}/manager.log" 'rpi_overlay done frames='
+        ;;
+      perf)
+        if [[ -f "${step_dir}/perf.log" ]]; then
+          tr '\r' '\n' <"${step_dir}/perf.log" |
+            grep -E '^PERF(_CHECK)? ' |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
+        ;;
+      camera_probe)
+        if [[ -f "${step_dir}/probe.log" ]]; then
+          tr '\r' '\n' <"${step_dir}/probe.log" |
+            grep -E '^CAMERA_PROBE(_V4L2)? |^CAMERA_PROBE_NODE .*candidate=1' |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
+        ;;
+    esac
+  } | tee -a "${CHECK_OUT_DIR}/check.log"
 }
 
 run_check_skip() {
