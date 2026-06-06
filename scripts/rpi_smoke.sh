@@ -1276,6 +1276,7 @@ run_perf_snapshot() {
   run_perf_model_case threads3 "${PERF_MIN_THREADS3_FPS:-12}" RPI_NCNN_THREADS=3 || rc=1
   run_perf_model_case input_bf16 "${PERF_MIN_INPUT_BF16_FPS:-15}" RPI_NCNN_INPUT_BF16=1 || rc=1
   run_perf_manager_case no_overlay "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_MODEL_FPS:-12}" RPI_RUN_OVERLAY=0 || rc=1
+  run_perf_manager_case no_overlay_threads3 "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_THREADS3_MODEL_FPS:-12}" RPI_RUN_OVERLAY=0 RPI_NCNN_THREADS=3 || rc=1
   run_perf_manager_case overlay_headless_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_MODEL_FPS:-12}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=0 RPI_OVERLAY_FPS=2 || rc=1
   run_perf_manager_case overlay_fb_2fps "${PERF_MIN_MANAGER_CAMERA_FPS:-25}" "${PERF_MIN_MANAGER_FB_MODEL_FPS:-8}" RPI_RUN_OVERLAY=1 RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 || rc=1
 

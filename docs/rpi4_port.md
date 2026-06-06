@@ -269,6 +269,7 @@ model default
 model threads3
 model input_bf16
 manager no_overlay
+manager no_overlay_threads3
 manager overlay_headless_2fps
 manager overlay_fb_2fps
 ```
@@ -293,6 +294,7 @@ PERF_MIN_THREADS3_FPS=12
 PERF_MIN_INPUT_BF16_FPS=15
 PERF_MIN_MANAGER_CAMERA_FPS=25
 PERF_MIN_MANAGER_MODEL_FPS=12
+PERF_MIN_MANAGER_THREADS3_MODEL_FPS=12
 PERF_MIN_MANAGER_FB_MODEL_FPS=8
 ```
 
@@ -594,7 +596,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | immediate profile retry, ondemand governor | `PASS`; 50 frames with warmup `10`, avg total/infer `75.12 / 71.87 ms`, p95 total/infer `80.12 / 76.92 ms`, max total/infer `190.76 / 187.42 ms`, model `13.03 fps`, throttled `0x0` |
 | temporary `performance` governor profile | `PASS`; 50 frames with warmup `10`, avg total/infer `52.89 / 50.43 ms`, p95 total/infer `53.81 / 51.33 ms`, max total/infer `121.88 / 119.38 ms`, model `18.88 fps`; governor restored to `ondemand` |
 | `RPI_SMOKE_CPU_GOVERNOR=performance CHECK_WITH_PROFILE=1 scripts/rpi_smoke.sh check` | `PASS`; model-only `19.68 fps`, rpicam pipe `29.81 fps`, synthetic camera/model `29.77 / 16.55 fps`, manager camera/model `29.29 / 18.41 fps`, replay camera/model `29.69 / 16.26 fps`, profile p95 total/infer `53.21 / 50.78 ms`; governor restored to `ondemand` |
-| `RPI_SMOKE_CPU_GOVERNOR=performance scripts/rpi_smoke.sh perf` | `PASS`; default model `13.85 fps`, threads3 `17.05 fps`, input_bf16 `19.40 fps`; manager no-overlay camera/model `29.31 / 19.05 fps`, headless overlay `29.21 / 18.84 fps`, fb overlay `29.24 / 18.43 fps`; governor restored to `ondemand` |
+| manager thread sweep, performance governor, no overlay | `threads=2`: camera/model `29.75 / 13.15 fps`; `threads=3`: `29.64 / 17.10 fps`; `threads=4`: `29.10 / 19.10 fps`; keep default `RPI_NCNN_THREADS=4` |
+| latest `RPI_SMOKE_CPU_GOVERNOR=performance scripts/rpi_smoke.sh perf` with manager threads3 gate | `PASS`; default model `19.15 fps`, threads3 `17.41 fps`, input_bf16 `18.92 fps`; manager no-overlay `29.06 / 18.76 fps`, no-overlay threads3 `29.74 / 17.06 fps`, headless overlay `29.12 / 14.72 fps` raw and `18.45 fps` steady, fb overlay `29.24 / 18.15 fps`; governor restored to `ondemand` |
 | latest `scripts/rpi_smoke.sh camera-probe` | `CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0 rpicam_candidates=0`; only Raspberry Pi codec/ISP helper `/dev/video*` nodes were visible; UVC camera failed USB enumeration with descriptor read errors `-32` and address errors `-71`; `rpicam-vid --list-cameras` reported no CSI/libcamera cameras |
 | forced `RPI_CAMERA_SOURCE=csi scripts/rpi_smoke.sh camera-real` with no CSI camera | bounded failure after `RPI_CAMERA_MAX_READ_ERRORS=2`; `rpicam-vid` reported `no cameras available`, frames `0`, errors `2` |
 
