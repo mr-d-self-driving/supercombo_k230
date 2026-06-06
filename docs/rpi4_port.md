@@ -288,6 +288,10 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | headless no-render overlay smoke, 6 sec | `rpi_overlay: headless no-render mode`; camera `29.23 fps`, model `14.24 fps` in a run with non-overlay modeld spikes |
 | no-overlay comparison, 6 sec | camera `29.06 fps`, model `18.12 fps`; also observed non-overlay `231 ms` modeld spike |
 | post-fast-path perf snapshot, 40 model frames / 4 sec manager | model default `19.88 fps`, no-overlay manager `18.10 fps`, headless overlay `18.56 fps`, fb overlay `18.37 fps` |
+| affinity split, `modeld=cores 1,2,3`, `camerad=core 0`, `threads=3` | camera `29.52 fps`, model `17.12 fps`; slower than default |
+| affinity split, `modeld=cores 1,2,3`, `threads=4` | camera `29.73 fps`, model `12.50 fps`; much slower |
+| `performance` governor, model-only 80 frames | model `19.34 fps`, no improvement over ondemand |
+| `performance` governor, manager no-overlay 8 sec | camera `29.11 fps`, model `18.33 fps`, temp rose to `71.5C`; restored to `ondemand` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -296,6 +300,11 @@ Default ncnn settings keep `RPI_NCNN_THREADS=4`, BF16 storage on, packing on, an
 BF16 input conversion off. Three ncnn threads leave more CPU room for overlay,
 but measured model throughput was lower, so 4 threads remains the best current
 default.
+
+No CPU-affinity split is enabled by default. `rpi_manager.py` supports
+`RPI_MODELD_CORES`, `RPI_CAMERAD_CORES`, and `RPI_OVERLAY_CORES` for experiments,
+and logs the actual child CPU mask/nice at startup. The measured split-core
+configurations were slower than the default all-core modeld run.
 
 The current Pi bottleneck is ncnn inference, not NV12 warp/YUV6 packing. After
 the first frame builds the warp map, preprocessing stays around `3 ms/frame`

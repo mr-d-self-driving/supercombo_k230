@@ -56,6 +56,25 @@ def child_setup(nice_adjust: int, cores_env: str):
             pass
 
 
+def read_status_value(pid: int, key: str) -> str:
+    try:
+        with open(f"/proc/{pid}/status", "r", encoding="utf-8") as status_file:
+            prefix = f"{key}:"
+            for line in status_file:
+                if line.startswith(prefix):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return "unknown"
+
+
+def read_process_nice(pid: int) -> str:
+    try:
+        return str(os.getpriority(os.PRIO_PROCESS, pid))
+    except OSError:
+        return "unknown"
+
+
 class RpiManager:
     def __init__(self, argv: List[str]):
         if len(argv) != 3:
@@ -110,7 +129,9 @@ class RpiManager:
         state.exit_code = 0
         print(
             f"rpi_manager: started {state.spec.name} pid={state.proc.pid} "
-            f"nice={state.spec.nice} cmd={' '.join(state.spec.cmd)}",
+            f"nice={state.spec.nice} actual_nice={read_process_nice(state.proc.pid)} "
+            f"cpus={read_status_value(state.proc.pid, 'Cpus_allowed_list')} "
+            f"cmd={' '.join(state.spec.cmd)}",
             flush=True,
         )
 
