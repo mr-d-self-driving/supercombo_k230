@@ -12,8 +12,8 @@ MODEL_PARAM="${MODEL_PARAM:-/home/chan/supercombo_models/supercombo_no_big_drop_
 MODEL_BIN="${MODEL_BIN:-/home/chan/supercombo_models/supercombo_no_big_drop_pruned_viz_opt.bin}"
 REPLAY_NV12="${REPLAY_NV12:-/home/chan/supercombo_models/replay_120.scnv12}"
 OUT_DIR="${OUT_DIR:-/tmp/rpi_smoke}"
-DISPLAY_MODE="${RPI_DISPLAY:-fb}"
-OVERLAY_FPS="${RPI_OVERLAY_FPS:-10}"
+DISPLAY_MODE="${RPI_DISPLAY:-0}"
+OVERLAY_FPS="${RPI_OVERLAY_FPS:-2}"
 CAMERA_FPS="${RPI_CAMERA_FPS:-30}"
 
 mkdir -p "${OUT_DIR}"

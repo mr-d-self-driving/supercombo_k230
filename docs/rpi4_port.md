@@ -119,10 +119,21 @@ RPI_CAMERA_SYNTHETIC=1 RPI_DISPLAY=fb RPI_MANAGER_MAX_SEC=10 ./rpi_manager.py \
 ```
 
 Use `RPI_DISPLAY=0` for headless overlay composition, `RPI_DISPLAY=fb` for direct
-`/dev/fb0` output, or leave it unset for OpenCV HighGUI when a desktop display
-session is available. `rpi_manager.py` defaults to `RPI_DISPLAY=0`, so SSH runs
-do not try to open a HighGUI window unless explicitly requested. On the current
-Pi, `/dev/fb0` is `480x320 RGB565`.
+`/dev/fb0` output, or leave it unset when running `rpi_overlay` directly for
+OpenCV HighGUI in a desktop display session. `rpi_manager.py` and
+`scripts/rpi_smoke.sh` default to `RPI_DISPLAY=0`, so SSH runs do not try to open
+a HighGUI window unless explicitly requested. On the current Pi, `/dev/fb0` is
+`480x320 RGB565`.
+
+The Pi defaults are model-throughput oriented:
+
+```text
+RPI_DISPLAY=0
+RPI_OVERLAY_FPS=2
+```
+
+Use `RPI_DISPLAY=fb RPI_OVERLAY_FPS=2 scripts/rpi_smoke.sh manager` to include
+framebuffer output while keeping modeld close to the headless baseline.
 
 Camera input modes:
 
@@ -240,6 +251,11 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `DUMP=1 scripts/rpi_smoke.sh replay` with dump verification | PPM `480x320`, mean `94.44`, min `0`, max `255`, errors `0` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
+| manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
+| manager, fb overlay `10 fps` | camera `29.15 fps`, model `15.72 fps`, overlay `94 frames`, errors `0` |
+| manager, fb overlay `5 fps` | camera `29.12 fps`, model `15.41 fps`, overlay `38 frames`, errors `0` |
+| manager, fb overlay `2 fps` | camera `29.13 fps`, model `18.54 fps`, overlay `15 frames`, errors `0` |
+| manager, fb overlay uncapped | camera `29.06 fps`, model `16.31 fps`, overlay `226 frames`, errors `0` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -252,6 +268,8 @@ default.
 The current Pi bottleneck is ncnn inference, not NV12 warp/YUV6 packing. After
 the first frame builds the warp map, preprocessing stays around `3 ms/frame`
 combined, while ncnn inference stays around `46-48 ms/frame`.
+Framebuffer overlay can still steal enough CPU/memory bandwidth to cause modeld
+spikes, so the default overlay cap is `2 fps`.
 
 Quick ncnn option sweep, 50 synthetic frames:
 

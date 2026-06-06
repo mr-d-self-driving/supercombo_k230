@@ -76,7 +76,7 @@ class RpiManager:
                      int(os.environ.get("RPI_MODELD_NICE", "0")), "RPI_MODELD_CORES"),
         ]
         if "rpi_overlay" in self.process_order:
-            os.environ.setdefault("RPI_OVERLAY_FPS", "10")
+            os.environ.setdefault("RPI_OVERLAY_FPS", "2")
             specs.append(ProcSpec("rpi_overlay", [os.path.join(APP_DIR, "rpi_overlay")],
                                   int(os.environ.get("RPI_OVERLAY_NICE", "10")), "RPI_OVERLAY_CORES"))
 
