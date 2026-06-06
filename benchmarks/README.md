@@ -19,8 +19,11 @@ cmake -S . -B /tmp/supercombo_k230_verify \
   -DSUPERCOMBO_BUILD_RUNTIME=OFF \
   -DSUPERCOMBO_BUILD_BENCHMARKS=ON
 cmake --build /tmp/supercombo_k230_verify \
-  --target verify_calibration_equivalence bench_input_warp_overhead -j2
+  --target verify_calibration_equivalence check_preprocess_parity check_ipc_abi \
+           bench_input_warp_overhead -j2
 ./verify_calibration_equivalence
+./check_preprocess_parity
+./check_ipc_abi
 ./bench_input_warp_overhead 3000
 ```
 
@@ -29,6 +32,9 @@ Available utilities:
 - `bench_nv12_to_yuv6`: CPU `NV12 512x256 -> YUV6 float` conversion timing.
 - `bench_input_warp_overhead`: compares direct YUV6 packing with the calibrated
   homography `NV12 -> YUV6` input-warp path.
+- `check_preprocess_parity`: deterministic `512x256 NV12 -> warped YUV6` and
+  two-frame `[previous_yuv6, current_yuv6]` stacking contract check.
+- `check_ipc_abi`: shared ring/latest-channel/modelState ABI round-trip check.
 - `verify_calibration_equivalence`: checks the pose-based online calibration
   state machine, manual/online model-input feedback policy, medmodel homography
   matrix, `transform_scale_buffer(0.5)` UV handling, and YUV6 plane order

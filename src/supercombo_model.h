@@ -3,6 +3,7 @@
 
 #include "ai_base.h"
 #include "app_config.h"
+#include "model_input_history.h"
 #include "model_input_transform.h"
 
 #include <cstddef>
@@ -34,7 +35,7 @@ private:
 
     std::vector<runtime_tensor> input_tensors_;
     ModelInputTransform input_transform_;
-    std::vector<float> prev_yuv_;
+    ModelInputHistory input_history_;
     std::vector<float> current_yuv_;
     std::vector<float> input_imgs_;
     std::vector<float> big_input_imgs_;

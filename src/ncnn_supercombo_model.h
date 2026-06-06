@@ -2,6 +2,7 @@
 #define NCNN_SUPERCOMBO_MODEL_H
 
 #include "app_config.h"
+#include "model_input_history.h"
 #include "model_input_transform.h"
 
 #include <cstdint>
@@ -52,7 +53,7 @@ private:
 
     std::unique_ptr<ncnn::Net> net_;
     ModelInputTransform input_transform_;
-    std::vector<float> prev_yuv_;
+    ModelInputHistory input_history_;
     std::vector<float> current_yuv_;
     std::vector<float> input_imgs_;
     std::vector<uint16_t> input_imgs_bf16_;

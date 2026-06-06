@@ -270,6 +270,27 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
   target_include_directories(bench_input_warp_overhead PRIVATE ${PROJECT_LOCAL_INCLUDES})
   target_compile_options(bench_input_warp_overhead PRIVATE ${PROJECT_WARNINGS})
 
+  add_executable(check_preprocess_parity
+    benchmarks/check_preprocess_parity.cc
+    src/app_config.cc
+    src/model_input_transform.cc
+  )
+  target_include_directories(check_preprocess_parity PRIVATE ${PROJECT_LOCAL_INCLUDES})
+  target_compile_options(check_preprocess_parity PRIVATE ${PROJECT_WARNINGS})
+
+  add_executable(check_ipc_abi
+    benchmarks/check_ipc_abi.cc
+    src/k230_ipc.cc
+    src/model_output.cc
+    src/projection.cc
+  )
+  target_include_directories(check_ipc_abi PRIVATE ${PROJECT_LOCAL_INCLUDES})
+  target_compile_options(check_ipc_abi PRIVATE ${PROJECT_WARNINGS})
+  target_link_libraries(check_ipc_abi PRIVATE pthread)
+  if(NOT APPLE)
+    target_link_libraries(check_ipc_abi PRIVATE atomic)
+  endif()
+
   add_executable(verify_calibration_equivalence
     benchmarks/verify_calibration_equivalence.cc
     src/app_config.cc

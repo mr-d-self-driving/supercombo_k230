@@ -41,12 +41,19 @@ cd /home/chan/supercombo_k230_rpi
 cmake -S . -B build-rpi4 \
   -DSUPERCOMBO_BUILD_RUNTIME=OFF \
   -DSUPERCOMBO_BUILD_RPI4=ON \
+  -DSUPERCOMBO_BUILD_BENCHMARKS=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build build-rpi4 --target rpi_camerad rpi_modeld rpi_overlay -j$(nproc)
+cmake --build build-rpi4 \
+  --target rpi_camerad rpi_modeld rpi_overlay \
+           check_preprocess_parity check_ipc_abi verify_calibration_equivalence \
+  -j$(nproc)
 ```
 
 The explicit `SUPERCOMBO_BUILD_RUNTIME=OFF` is intentional. It avoids pulling in
 K230 nncase/display dependencies while building the Pi-only binaries.
+`SUPERCOMBO_BUILD_BENCHMARKS=ON` is recommended on the Pi because
+`scripts/rpi_smoke.sh parity` and the default aggregate `check` use the portable
+preprocess/IPC/calibration gates.
 
 If ncnn moves, pass:
 
@@ -97,6 +104,7 @@ The common smoke commands are wrapped in:
 ```sh
 scripts/rpi_smoke.sh model
 scripts/rpi_smoke.sh profile
+scripts/rpi_smoke.sh parity
 scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-file
@@ -147,6 +155,29 @@ PROFILE_METRIC mode=synthetic frames=40 total_ms=... warp_ms=... input_ms=... in
 Use `PROFILE_MODEL_FRAMES=...` for longer samples, or `CHECK_WITH_PROFILE=1`
 to include the same timing breakdown in `scripts/rpi_smoke.sh check`.
 
+`parity` runs the deterministic contract checks that do not require a camera or
+ncnn inference:
+
+```text
+check_preprocess_parity
+check_ipc_abi
+verify_calibration_equivalence
+```
+
+It prints machine-readable lines such as:
+
+```text
+PREPROCESS_PARITY result=PASS identity_max0=0.0 identity_max1=0.0 ...
+IPC_ABI result=PASS header=40 ring_header=32 road_ai_frame=48 model_state=4360 ...
+verify_calibration_equivalence: PASS
+```
+
+`check_preprocess_parity` verifies zero-calibration `NV12 -> YUV6` exactness,
+nonzero warp activity, and two-frame `[previous_yuv6, current_yuv6]` stacking.
+`check_ipc_abi` verifies shared ring dimensions/stride, latest-channel
+conflation, and `modelState` round trip for plan/lane/road-edge/lead/pose,
+calibration, and lateral-plan fields.
+
 `perf` runs a short performance snapshot:
 
 ```text
@@ -185,6 +216,7 @@ checks as the primary throughput gates.
 `check` is the camera-less aggregate gate for the current Pi setup. It runs:
 
 ```text
+parity
 model
 camera synthetic
 camera-file, if ffmpeg and REPLAY_NV12 are available
@@ -215,6 +247,7 @@ CHECK_MODEL_FRAMES=20
 CHECK_INCLUDE_CAMERA_FILE=auto
 CHECK_CAMERA_FILE_FRAMES=30
 CHECK_CAMERA_FILE_SOURCE_FRAMES=60
+CHECK_WITH_PARITY=1
 CHECK_WITH_PROFILE=0
 CHECK_PROFILE_MODEL_FRAMES=30
 CHECK_SYNTHETIC_CAMERA_FRAMES=120
@@ -398,6 +431,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `scripts/rpi_smoke.sh replay` without dump | camera `29.36 fps`, model `17.36 fps`, overlay `~10 fps`, errors `0` |
 | `DUMP=1 scripts/rpi_smoke.sh replay` short smoke | `overlay.ppm` generated, errors `0` |
 | `DUMP=1 scripts/rpi_smoke.sh replay` with dump verification | PPM `480x320`, mean `94.44`, min `0`, max `255`, errors `0` |
+| `scripts/rpi_smoke.sh parity` | preprocess parity, IPC ABI/modelState round trip, and calibration equivalence all `PASS` |
+| short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS`, camera `39.36 fps`, camera-file `61.96 fps`, synthetic pipeline camera `30.24 fps`, model `12.97 fps`, overlay consumed `model_seq=6`, profile total `59.41 ms` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 | manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
@@ -416,6 +451,7 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | affinity split, `modeld=cores 1,2,3`, `threads=4` | camera `29.73 fps`, model `12.50 fps`; much slower |
 | `performance` governor, model-only 80 frames | model `19.34 fps`, no improvement over ondemand |
 | `performance` governor, manager no-overlay 8 sec | camera `29.11 fps`, model `18.33 fps`, temp rose to `71.5C`; restored to `ondemand` |
+| post-parity-refactor `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | default model retry `18.02 fps`, threads3 `15.45 fps`, input BF16 `18.69 fps`, no-overlay manager camera `29.16 fps` / model `18.19 fps`, headless overlay model `14.97 fps`, fb overlay model `16.90 fps`; all checks `PASS` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.

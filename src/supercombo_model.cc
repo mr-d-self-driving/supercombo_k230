@@ -80,7 +80,6 @@ ProfileStats &profile_stats()
 SupercomboModel::SupercomboModel(const char *kmodel_file, int debug_mode, const AppConfig &config)
     : AIBase(kmodel_file, "Supercombo", debug_mode),
       input_transform_(config),
-      prev_yuv_(kYuv6Floats, 0.0f),
       current_yuv_(kYuv6Floats, 0.0f),
       input_imgs_(kInputImageFloats, 0.0f),
       big_input_imgs_(kInputImageFloats, 0.0f),
@@ -94,7 +93,7 @@ SupercomboModel::SupercomboModel(const char *kmodel_file, int debug_mode, const 
 
 void SupercomboModel::reset_state()
 {
-    std::fill(prev_yuv_.begin(), prev_yuv_.end(), 0.0f);
+    input_history_.reset();
     std::fill(recurrent_state_.begin(), recurrent_state_.end(), 0.0f);
 }
 
@@ -114,9 +113,7 @@ bool SupercomboModel::run_frame_nv12(const uint8_t *nv12, int src_w, int src_h, 
 
 bool SupercomboModel::run_current_yuv6(std::vector<float> &raw_output, bool profile, uint64_t t0, uint64_t t1)
 {
-    std::memcpy(input_imgs_.data(), prev_yuv_.data(), prev_yuv_.size() * sizeof(float));
-    std::memcpy(input_imgs_.data() + prev_yuv_.size(), current_yuv_.data(), current_yuv_.size() * sizeof(float));
-    prev_yuv_.swap(current_yuv_);
+    input_history_.push_yuv6(current_yuv_, input_imgs_);
     const uint64_t t2 = profile ? now_ns() : 0;
 
     if (!write_input(0, input_imgs_.data(), input_imgs_.size())) return false;

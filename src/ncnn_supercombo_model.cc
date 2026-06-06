@@ -46,7 +46,6 @@ NcnnSupercomboModel::NcnnSupercomboModel(const std::string &param_path,
                                          const AppConfig &config)
     : net_(new ncnn::Net()),
       input_transform_(config),
-      prev_yuv_(kYuv6Floats, 0.0f),
       current_yuv_(kYuv6Floats, 0.0f),
       input_imgs_(kInputImageFloats, 0.0f),
       input_imgs_bf16_(kInputImageFloats, 0),
@@ -92,7 +91,7 @@ NcnnSupercomboModel::~NcnnSupercomboModel() = default;
 
 void NcnnSupercomboModel::reset_state()
 {
-    std::fill(prev_yuv_.begin(), prev_yuv_.end(), 0.0f);
+    input_history_.reset();
     std::fill(recurrent_state_.begin(), recurrent_state_.end(), 0.0f);
 }
 
@@ -118,10 +117,7 @@ float NcnnSupercomboModel::bfloat16_bits_to_float(uint16_t value)
 
 void NcnnSupercomboModel::prepare_input_tensor()
 {
-    std::memcpy(input_imgs_.data(), prev_yuv_.data(), prev_yuv_.size() * sizeof(float));
-    std::memcpy(input_imgs_.data() + prev_yuv_.size(), current_yuv_.data(),
-                current_yuv_.size() * sizeof(float));
-    prev_yuv_.swap(current_yuv_);
+    input_history_.push_yuv6(current_yuv_, input_imgs_);
 
     if (use_bf16_input_) {
         for (size_t i = 0; i < input_imgs_.size(); ++i)

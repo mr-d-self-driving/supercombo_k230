@@ -27,6 +27,7 @@ reset_outputs() {
         "${OUT_DIR}/model.log" \
         "${OUT_DIR}/overlay.log" \
         "${OUT_DIR}/manager.log" \
+        "${OUT_DIR}/parity.log" \
         "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
         "${OUT_DIR}/dump_verify.log" \
@@ -228,6 +229,27 @@ summarize_single() {
       print_matches profile "${OUT_DIR}/model.log" 'rpi_modeld (profile|synthetic done)'
       emit_profile_metric "${OUT_DIR}/model.log" || check_rc=1
       validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
+      ;;
+    parity)
+      print_matches parity "${OUT_DIR}/parity.log" 'PREPROCESS_PARITY|IPC_ABI|verify_calibration_equivalence'
+      if ! grep -q 'PREPROCESS_PARITY result=PASS' "${OUT_DIR}/parity.log"; then
+        echo "SMOKE_CHECK component=preprocess_parity result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=preprocess_parity result=PASS"
+      fi
+      if ! grep -q 'IPC_ABI result=PASS' "${OUT_DIR}/parity.log"; then
+        echo "SMOKE_CHECK component=ipc_abi result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=ipc_abi result=PASS"
+      fi
+      if ! grep -q 'verify_calibration_equivalence: PASS' "${OUT_DIR}/parity.log"; then
+        echo "SMOKE_CHECK component=calibration_equivalence result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=calibration_equivalence result=PASS"
+      fi
       ;;
     camera)
       print_matches camera "${OUT_DIR}/camera.log" 'rpi_camerad (fps|done)'
@@ -450,6 +472,20 @@ run_profile_snapshot() {
     return 1
   fi
   return 0
+}
+
+run_parity_checks() {
+  reset_outputs
+  require_executable check_preprocess_parity
+  require_executable check_ipc_abi
+  require_executable verify_calibration_equivalence
+  local rc=0
+  {
+    "${ROOT_DIR}/check_preprocess_parity"
+    "${ROOT_DIR}/check_ipc_abi"
+    "${ROOT_DIR}/verify_calibration_equivalence"
+  } 2>&1 | tee "${OUT_DIR}/parity.log" || rc=$?
+  summarize_single parity "${rc}"
 }
 
 run_camera_only() {
@@ -820,6 +856,13 @@ append_check_step_summary() {
         fi
         check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='
         ;;
+      parity)
+        if [[ -f "${step_dir}/parity.log" ]]; then
+          tr '\r' '\n' <"${step_dir}/parity.log" |
+            grep -E '^(PREPROCESS_PARITY|IPC_ABI|verify_calibration_equivalence)' |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
+        ;;
       camera|camera_file|camera_replay|camera_real)
         check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
         ;;
@@ -860,6 +903,10 @@ run_check_skip() {
 run_check_model() {
   MODEL_FRAMES="${CHECK_MODEL_FRAMES:-20}"
   run_model_only
+}
+
+run_check_parity() {
+  run_parity_checks
 }
 
 run_check_profile() {
@@ -925,6 +972,9 @@ run_check_suite() {
   CHECK_OUT_DIR="${base}"
 
   local rc=0
+  if [[ "${CHECK_WITH_PARITY:-1}" != "0" ]]; then
+    run_check_step parity run_check_parity || rc=1
+  fi
   run_check_step model run_check_model || rc=1
   run_check_step camera run_check_camera || rc=1
   local include_camera_file="${CHECK_INCLUDE_CAMERA_FILE:-auto}"
@@ -977,6 +1027,9 @@ case "${MODE}" in
   profile)
     run_profile_snapshot
     ;;
+  parity)
+    run_parity_checks
+    ;;
   camera)
     run_camera_only synthetic
     ;;
@@ -1008,7 +1061,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {model|profile|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {model|profile|parity|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac
