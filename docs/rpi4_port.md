@@ -124,6 +124,7 @@ scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-file
 scripts/rpi_smoke.sh camera-replay
 scripts/rpi_smoke.sh camera-real
+scripts/rpi_smoke.sh camera-rpicam-pipe
 scripts/rpi_smoke.sh synthetic
 scripts/rpi_smoke.sh replay
 scripts/rpi_smoke.sh manager
@@ -294,6 +295,7 @@ parity
 model
 camera synthetic
 camera-file, if ffmpeg and REPLAY_NV12 are available
+rpicam YUV420 pipe, if python3 is available
 synthetic pipeline with DUMP=1
 manager
 camera-replay, if REPLAY_NV12 exists
@@ -322,6 +324,8 @@ CHECK_WITH_ARTIFACTS=1
 CHECK_INCLUDE_CAMERA_FILE=auto
 CHECK_CAMERA_FILE_FRAMES=30
 CHECK_CAMERA_FILE_SOURCE_FRAMES=60
+CHECK_INCLUDE_RPICAM_PIPE=auto
+CHECK_CAMERA_RPICAM_PIPE_FRAMES=30
 CHECK_WITH_PARITY=1
 CHECK_WITH_PROFILE=0
 CHECK_PROFILE_MODEL_FRAMES=30
@@ -411,6 +415,15 @@ RPI_CAMERA_REPLAY_NV12=/home/chan/supercombo_models/replay_120.scnv12 \
 path without physical camera hardware. It uses `ffmpeg` to convert
 `REPLAY_NV12` into a short MJPEG AVI under `OUT_DIR`, then runs `rpi_camerad`
 with `RPI_CAMERA_SOURCE` pointing at that file.
+
+`scripts/rpi_smoke.sh camera-rpicam-pipe` validates the Raspberry Pi
+CSI/libcamera ingest path without physical CSI camera hardware. It generates a
+small Python YUV420 stdout producer and runs `rpi_camerad` with
+`RPI_CAMERA_SOURCE=rpicam` plus `RPI_RPICAM_COMMAND=...`. This exercises the
+same `rpicam-vid --codec yuv420 --output -` parser and YUV420-to-NV12 path that
+a real CSI camera uses, then checks the resulting `512x256 NV12` shared-ring
+metadata. The default aggregate `check` includes this smoke automatically when
+`python3` exists; set `CHECK_INCLUDE_RPICAM_PIPE=0` to skip it.
 
 For automated visual verification, `rpi_overlay` can dump its final rendered
 BGR frame as a PPM:
@@ -557,6 +570,8 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | latest `scripts/rpi_smoke.sh perf`, 60 model frames / 4 sec manager | default model `11.13 fps`, threads3 `12.82 fps`, input_bf16 `18.09 fps`; manager no_overlay camera/model `29.17 / 17.37 fps`, headless overlay `29.14 / 17.02 fps`, fb overlay `29.34 / 16.60 fps`; all `PERF_CHECK` gates `PASS` |
 | `compare-input`, replay 20 frames | `RPI_NCNN_INPUT_BF16=1` is not accuracy-compatible with float input: raw mean/max abs `1.229 / 62.0`, plan mean/end L2 `17.08 / 44.23`, lane y mean/max abs `2.158 / 25.047`, road-edge y mean/max abs `7.014 / 33.938`, best-plan mismatch `7/20`; recommendation `float` |
 | latest camera-source regression after rpicam source addition | synthetic `30.76 fps`, replay `30.57 fps`; both `FRAME_METADATA result=PASS`; camera-file path previously remained valid at `94.46 fps` |
+| `scripts/rpi_smoke.sh camera-rpicam-pipe` | rpicam YUV420 stdout ingest path `PASS`; `29.14 fps` standalone, metadata `512x256 NV12` crop `0,0,512,256`, errors `0` |
+| short aggregate `scripts/rpi_smoke.sh check` including rpicam pipe | artifacts/parity/model/camera/camera-file/rpicam-pipe/synthetic/manager `PASS`; rpicam pipe `29.52 fps`, synthetic pipeline camera/model `29.95 / 11.84 fps`, manager camera/model `29.01 / 12.75 fps`; replay skipped with `CHECK_INCLUDE_REPLAY=0` |
 | latest `scripts/rpi_smoke.sh camera-probe` | `CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0 rpicam_candidates=0`; only Raspberry Pi codec/ISP helper `/dev/video*` nodes were visible; UVC camera failed USB enumeration with descriptor read errors `-32` and address errors `-71`; `rpicam-vid --list-cameras` reported no CSI/libcamera cameras |
 | forced `RPI_CAMERA_SOURCE=csi scripts/rpi_smoke.sh camera-real` with no CSI camera | bounded failure after `RPI_CAMERA_MAX_READ_ERRORS=2`; `rpicam-vid` reported `no cameras available`, frames `0`, errors `2` |
 

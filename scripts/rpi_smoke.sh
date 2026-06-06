@@ -38,6 +38,7 @@ reset_outputs() {
         "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
         "${OUT_DIR}/dump_verify.log" \
+        "${OUT_DIR}/rpicam_yuv420_source.py" \
         "${OUT_DIR}/overlay.ppm"
 }
 
@@ -367,7 +368,7 @@ summarize_single() {
       validate_frame_metadata_log "${OUT_DIR}/frame_metadata.log" || check_rc=1
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
       ;;
-    camera-file|camera-replay|camera-real)
+    camera-file|camera-replay|camera-real|camera-rpicam-pipe)
       print_matches camera "${OUT_DIR}/camera.log" 'CAMERA_AUTO_SOURCE|rpi_camerad (fps|done|error)'
       validate_frame_metadata_log "${OUT_DIR}/frame_metadata.log" || check_rc=1
       validate_component_log camera "${OUT_DIR}/camera.log" 'rpi_camerad done frames=' "${SMOKE_MIN_CAMERA_FPS:-20}" || check_rc=1
@@ -737,6 +738,48 @@ make_camera_file_fixture() {
   echo "${path}"
 }
 
+can_make_rpicam_pipe_fixture() {
+  command -v python3 >/dev/null
+}
+
+make_rpicam_pipe_fixture_command() {
+  if ! command -v python3 >/dev/null; then
+    echo "python3 missing; cannot generate rpicam pipe fixture" >&2
+    return 2
+  fi
+  local path="${OUT_DIR}/rpicam_yuv420_source.py"
+  cat >"${path}" <<'PY'
+import sys
+import time
+
+WIDTH = 512
+HEIGHT = 256
+Y_SIZE = WIDTH * HEIGHT
+UV_SIZE = Y_SIZE // 4
+
+frames = int(sys.argv[1])
+fps = float(sys.argv[2])
+period = 1.0 / fps if fps > 0 else 0.0
+next_t = time.monotonic()
+
+for frame_id in range(frames):
+    y = bytes([(32 + frame_id * 3) & 0xff]) * Y_SIZE
+    u = bytes([(96 + frame_id) & 0xff]) * UV_SIZE
+    v = bytes([(128 + frame_id * 2) & 0xff]) * UV_SIZE
+    sys.stdout.buffer.write(y)
+    sys.stdout.buffer.write(u)
+    sys.stdout.buffer.write(v)
+    sys.stdout.buffer.flush()
+    if period > 0:
+        next_t += period
+        delay = next_t - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+PY
+  chmod +x "${path}"
+  printf 'python3 %s %s %s\n' "${path}" "${CAMERA_FRAMES:-30}" "${CAMERA_FPS}"
+}
+
 run_model_only() {
   require_file "${MODEL_PARAM}"
   require_file "${MODEL_BIN}"
@@ -824,6 +867,8 @@ run_camera_only() {
     summary_mode="camera-file"
   elif [[ "${source_mode}" == "real" ]]; then
     summary_mode="camera-real"
+  elif [[ "${source_mode}" == "rpicam-pipe" ]]; then
+    summary_mode="camera-rpicam-pipe"
   fi
   reset_outputs
   cleanup_shm
@@ -873,6 +918,14 @@ run_camera_only() {
         fi
       } 2>&1 | tee "${OUT_DIR}/camera.log"
     fi
+  elif [[ "${source_mode}" == "rpicam-pipe" ]]; then
+    local rpicam_command
+    rpicam_command="$(make_rpicam_pipe_fixture_command)"
+    SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
+      RPI_CAMERA_SOURCE=rpicam \
+      RPI_RPICAM_COMMAND="${rpicam_command}" \
+      RPI_CAMERA_FPS="${CAMERA_FPS}" \
+      "${ROOT_DIR}/rpi_camerad" 2>&1 | tee "${OUT_DIR}/camera.log"
   else
     SUPERCOMBO_MAX_FRAMES="${CAMERA_FRAMES:-30}" \
       RPI_CAMERA_SYNTHETIC=1 \
@@ -1256,7 +1309,7 @@ append_check_step_summary() {
             sed "s/^/CHECK_DETAIL step=${name} /" || true
         fi
         ;;
-      camera|camera_file|camera_replay|camera_real)
+      camera|camera_file|camera_replay|camera_real|camera_rpicam_pipe)
         check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
         if [[ -f "${step_dir}/frame_metadata.log" ]]; then
           tr '\r' '\n' <"${step_dir}/frame_metadata.log" |
@@ -1332,6 +1385,11 @@ run_check_camera_file() {
   run_camera_only file
 }
 
+run_check_camera_rpicam_pipe() {
+  CAMERA_FRAMES="${CHECK_CAMERA_RPICAM_PIPE_FRAMES:-30}"
+  run_camera_only rpicam-pipe
+}
+
 run_check_synthetic() {
   CAMERA_FRAMES="${CHECK_SYNTHETIC_CAMERA_FRAMES:-120}"
   MODEL_FRAMES="${CHECK_SYNTHETIC_MODEL_FRAMES:-12}"
@@ -1389,6 +1447,15 @@ run_check_suite() {
     run_check_skip camera_file "missing_or_disabled_fixture"
   else
     echo "invalid CHECK_INCLUDE_CAMERA_FILE=${include_camera_file}; use auto, 0, or 1" >&2
+    rc=1
+  fi
+  local include_rpicam_pipe="${CHECK_INCLUDE_RPICAM_PIPE:-auto}"
+  if [[ "${include_rpicam_pipe}" == "1" || ( "${include_rpicam_pipe}" == "auto" && can_make_rpicam_pipe_fixture ) ]]; then
+    run_check_step camera_rpicam_pipe run_check_camera_rpicam_pipe || rc=1
+  elif [[ "${include_rpicam_pipe}" == "auto" || "${include_rpicam_pipe}" == "0" ]]; then
+    run_check_skip camera_rpicam_pipe "missing_or_disabled_python3"
+  else
+    echo "invalid CHECK_INCLUDE_RPICAM_PIPE=${include_rpicam_pipe}; use auto, 0, or 1" >&2
     rc=1
   fi
   run_check_step synthetic run_check_synthetic || rc=1
@@ -1453,6 +1520,9 @@ case "${MODE}" in
   camera-real)
     run_camera_only real
     ;;
+  camera-rpicam-pipe)
+    run_camera_only rpicam-pipe
+    ;;
   camera-probe)
     run_camera_probe
     ;;
@@ -1472,7 +1542,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {artifacts|model|profile|parity|compare-input|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {artifacts|model|profile|parity|compare-input|camera|camera-file|camera-replay|camera-real|camera-rpicam-pipe|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac
