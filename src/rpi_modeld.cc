@@ -27,6 +27,35 @@ void signal_handler(int)
     g_stop = 1;
 }
 
+struct TimingStats {
+    unsigned count = 0;
+    double warp_ms = 0.0;
+    double input_ms = 0.0;
+    double infer_ms = 0.0;
+    double output_ms = 0.0;
+    double total_ms = 0.0;
+
+    void add(const NcnnSupercomboModel::RunTiming &timing)
+    {
+        ++count;
+        warp_ms += timing.warp_ms;
+        input_ms += timing.input_ms;
+        infer_ms += timing.infer_ms;
+        output_ms += timing.output_ms;
+        total_ms += timing.total_ms;
+    }
+
+    void print(const char *mode) const
+    {
+        if (count == 0) return;
+        const double scale = 1.0 / static_cast<double>(count);
+        std::fprintf(stderr,
+                     "rpi_modeld profile mode=%s frames=%u avg_ms total=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f\n",
+                     mode, count, total_ms * scale, warp_ms * scale, input_ms * scale,
+                     infer_ms * scale, output_ms * scale);
+    }
+};
+
 uint64_t timeval_us(const timeval &tv)
 {
     return static_cast<uint64_t>(tv.tv_sec) * 1000000ULL + tv.tv_usec;
@@ -181,6 +210,7 @@ int run_synthetic(const AppConfig &config, NcnnSupercomboModel &model,
         config.max_frames > 0 ? config.max_frames : 30);
     unsigned errors = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    TimingStats timing_stats;
     timeval start {};
     gettimeofday(&start, nullptr);
 
@@ -190,6 +220,7 @@ int run_synthetic(const AppConfig &config, NcnnSupercomboModel &model,
         float model_ms = 0.0f;
         NcnnSupercomboModel::RunTiming timing;
         run_one_frame(model, model_pub, calibration, lateral_control, frame, i, errors, &model_ms, &timing);
+        if (profile) timing_stats.add(timing);
         if (profile) {
             std::fprintf(stderr,
                          "rpi_modeld synthetic: frame=%u/%u model_ms=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f errors=%u          \r",
@@ -206,6 +237,7 @@ int run_synthetic(const AppConfig &config, NcnnSupercomboModel &model,
     gettimeofday(&end, nullptr);
     const uint64_t duration = timeval_us(end) - timeval_us(start);
     const double fps = duration > 0 ? frames * 1000000.0 / duration : 0.0;
+    if (profile) timing_stats.print("synthetic");
     std::fprintf(stderr, "\nrpi_modeld synthetic done frames=%u errors=%u fps=%.2f\n",
                  frames, errors, fps);
     return errors == 0 ? 0 : 1;
@@ -225,6 +257,7 @@ int run_replay(const AppConfig &config, NcnnSupercomboModel &model,
     unsigned processed = 0;
     unsigned errors = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    TimingStats timing_stats;
     timeval start {};
     gettimeofday(&start, nullptr);
 
@@ -234,6 +267,7 @@ int run_replay(const AppConfig &config, NcnnSupercomboModel &model,
         NcnnSupercomboModel::RunTiming timing;
         run_one_frame(model, model_pub, calibration, lateral_control, frame, processed, errors, &model_ms, &timing);
         ++processed;
+        if (profile) timing_stats.add(timing);
         if (profile) {
             std::fprintf(stderr,
                          "rpi_modeld replay: frame=%u/%u model_ms=%.2f warp=%.2f input=%.2f infer=%.2f output=%.2f errors=%u          \r",
@@ -250,6 +284,7 @@ int run_replay(const AppConfig &config, NcnnSupercomboModel &model,
     gettimeofday(&end, nullptr);
     const uint64_t duration = timeval_us(end) - timeval_us(start);
     const double fps = duration > 0 ? processed * 1000000.0 / duration : 0.0;
+    if (profile) timing_stats.print("replay");
     std::fprintf(stderr, "\nrpi_modeld replay done frames=%u errors=%u fps=%.2f\n",
                  processed, errors, fps);
     return processed > 0 && errors == 0 ? 0 : 1;
@@ -280,6 +315,7 @@ int run_live(const AppConfig &config, NcnnSupercomboModel &model,
     unsigned errors = 0;
     unsigned missed = 0;
     const bool profile = env_u32_local("RPI_PROFILE_MODEL", 0) != 0;
+    TimingStats timing_stats;
     timeval start {};
     timeval last {};
     gettimeofday(&start, nullptr);
@@ -312,6 +348,7 @@ int run_live(const AppConfig &config, NcnnSupercomboModel &model,
         run_one_nv12(model, model_pub, calibration, lateral_control, nv12, meta.width, meta.height,
                      meta.frame_id, errors, &model_ms, &timing);
         ++processed;
+        if (profile) timing_stats.add(timing);
 
         if (config.max_frames > 0 && processed >= config.max_frames) break;
 
@@ -341,6 +378,7 @@ int run_live(const AppConfig &config, NcnnSupercomboModel &model,
     gettimeofday(&end, nullptr);
     const uint64_t total_us = timeval_us(end) - timeval_us(start);
     const double fps = total_us > 0 ? processed * 1000000.0 / total_us : 0.0;
+    if (profile) timing_stats.print("live");
     std::fprintf(stderr, "\nrpi_modeld done frames=%u missed=%u errors=%u fps=%.2f\n",
                  processed, missed, errors, fps);
     return processed > 0 && errors == 0 ? 0 : 1;

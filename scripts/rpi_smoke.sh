@@ -130,6 +130,25 @@ validate_manager_log() {
   return "${rc}"
 }
 
+emit_profile_metric() {
+  local path="$1"
+  local line
+  if ! line="$(last_log_line "${path}" 'rpi_modeld profile mode=')"; then
+    echo "PROFILE_METRIC result=missing log=${path}"
+    return 1
+  fi
+  local mode frames total warp input infer output
+  mode="$(field_from_line "${line}" mode)"
+  frames="$(field_from_line "${line}" frames)"
+  total="$(field_from_line "${line}" total)"
+  warp="$(field_from_line "${line}" warp)"
+  input="$(field_from_line "${line}" input)"
+  infer="$(field_from_line "${line}" infer)"
+  output="$(field_from_line "${line}" output)"
+  echo "PROFILE_METRIC mode=${mode:-NA} frames=${frames:-NA} total_ms=${total:-NA} warp_ms=${warp:-NA} input_ms=${input:-NA} infer_ms=${infer:-NA} output_ms=${output:-NA}"
+  return 0
+}
+
 summarize_pipeline() {
   local source_mode="$1"
   local model_rc="$2"
@@ -203,6 +222,11 @@ summarize_single() {
   case "${mode}" in
     model)
       print_matches model "${OUT_DIR}/model.log" 'rpi_modeld(:| synthetic| replay| .*done)'
+      validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
+      ;;
+    profile)
+      print_matches profile "${OUT_DIR}/model.log" 'rpi_modeld (profile|synthetic done)'
+      emit_profile_metric "${OUT_DIR}/model.log" || check_rc=1
       validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
       ;;
     camera)
@@ -400,6 +424,28 @@ run_model_only() {
   set -e
   local summary_rc=0
   summarize_single model "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+run_profile_snapshot() {
+  require_file "${MODEL_PARAM}"
+  require_file "${MODEL_BIN}"
+  require_executable rpi_modeld
+  reset_outputs
+  local frames="${PROFILE_MODEL_FRAMES:-40}"
+  set +e
+  SUPERCOMBO_MAX_FRAMES="${frames}" \
+    RPI_SYNTHETIC=1 \
+    RPI_SYNTHETIC_FRAMES="${frames}" \
+    RPI_PROFILE_MODEL=1 \
+    "${ROOT_DIR}/rpi_modeld" "${MODEL_PARAM}" "${MODEL_BIN}" 2>&1 | tee "${OUT_DIR}/model.log"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  local summary_rc=0
+  summarize_single profile "${rc}" || summary_rc=$?
   if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
     return 1
   fi
@@ -767,6 +813,13 @@ append_check_step_summary() {
       model)
         check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='
         ;;
+      profile)
+        if [[ -f "${step_dir}/model.log" ]]; then
+          emit_profile_metric "${step_dir}/model.log" |
+            sed "s/^/CHECK_DETAIL step=${name} /" || true
+        fi
+        check_metric_from_log "${name}" model "${step_dir}/model.log" 'rpi_modeld synthetic done frames='
+        ;;
       camera|camera_file|camera_replay|camera_real)
         check_metric_from_log "${name}" camera "${step_dir}/camera.log" 'rpi_camerad done frames='
         ;;
@@ -807,6 +860,11 @@ run_check_skip() {
 run_check_model() {
   MODEL_FRAMES="${CHECK_MODEL_FRAMES:-20}"
   run_model_only
+}
+
+run_check_profile() {
+  PROFILE_MODEL_FRAMES="${CHECK_PROFILE_MODEL_FRAMES:-30}"
+  run_profile_snapshot
 }
 
 run_check_camera() {
@@ -881,6 +939,10 @@ run_check_suite() {
   run_check_step synthetic run_check_synthetic || rc=1
   run_check_step manager run_check_manager || rc=1
 
+  if [[ "${CHECK_WITH_PROFILE:-0}" != "0" ]]; then
+    run_check_step profile run_check_profile || rc=1
+  fi
+
   local include_replay="${CHECK_INCLUDE_REPLAY:-auto}"
   if [[ "${include_replay}" == "1" || ( "${include_replay}" == "auto" && -f "${REPLAY_NV12}" ) ]]; then
     run_check_step camera_replay run_check_camera_replay || rc=1
@@ -911,6 +973,9 @@ run_check_suite() {
 case "${MODE}" in
   model)
     run_model_only
+    ;;
+  profile)
+    run_profile_snapshot
     ;;
   camera)
     run_camera_only synthetic
@@ -943,7 +1008,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {model|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {model|profile|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac

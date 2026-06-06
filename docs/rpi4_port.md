@@ -94,6 +94,7 @@ The common smoke commands are wrapped in:
 
 ```sh
 scripts/rpi_smoke.sh model
+scripts/rpi_smoke.sh profile
 scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-file
@@ -133,6 +134,16 @@ SMOKE_REQUIRE_OVERLAY_MODEL=1
 
 Raise these only when the Pi is in a stable performance test setup. Use `perf`
 for the stricter throughput snapshot.
+
+`profile` runs `rpi_modeld` with `RPI_PROFILE_MODEL=1` and prints a single
+`PROFILE_METRIC` line with average per-frame timing:
+
+```text
+PROFILE_METRIC mode=synthetic frames=40 total_ms=... warp_ms=... input_ms=... infer_ms=... output_ms=...
+```
+
+Use `PROFILE_MODEL_FRAMES=...` for longer samples, or `CHECK_WITH_PROFILE=1`
+to include the same timing breakdown in `scripts/rpi_smoke.sh check`.
 
 `perf` runs a short performance snapshot:
 
@@ -202,6 +213,8 @@ CHECK_MODEL_FRAMES=20
 CHECK_INCLUDE_CAMERA_FILE=auto
 CHECK_CAMERA_FILE_FRAMES=30
 CHECK_CAMERA_FILE_SOURCE_FRAMES=60
+CHECK_WITH_PROFILE=0
+CHECK_PROFILE_MODEL_FRAMES=30
 CHECK_SYNTHETIC_CAMERA_FRAMES=120
 CHECK_SYNTHETIC_MODEL_FRAMES=12
 CHECK_SYNTHETIC_OVERLAY_FRAMES=5
