@@ -223,6 +223,7 @@ if(SUPERCOMBO_BUILD_RPI4)
   add_executable(rpi_modeld
     src/rpi_modeld.cc
     src/ncnn_supercombo_model.cc
+    src/ncnn_output_contract.cc
   )
   configure_rpi_target(rpi_modeld supercombo_rpi_core ${NCNN_LIBRARY})
   if(OpenMP_CXX_FOUND)
@@ -289,6 +290,20 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
   target_link_libraries(check_ipc_abi PRIVATE pthread)
   if(NOT APPLE)
     target_link_libraries(check_ipc_abi PRIVATE atomic)
+  endif()
+
+  add_executable(check_ncnn_output_contract
+    benchmarks/check_ncnn_output_contract.cc
+    src/k230_ipc.cc
+    src/model_output.cc
+    src/ncnn_output_contract.cc
+    src/projection.cc
+  )
+  target_include_directories(check_ncnn_output_contract PRIVATE ${PROJECT_LOCAL_INCLUDES})
+  target_compile_options(check_ncnn_output_contract PRIVATE ${PROJECT_WARNINGS})
+  target_link_libraries(check_ncnn_output_contract PRIVATE pthread)
+  if(NOT APPLE)
+    target_link_libraries(check_ncnn_output_contract PRIVATE atomic)
   endif()
 
   add_executable(verify_calibration_equivalence

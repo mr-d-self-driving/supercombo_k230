@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "model_input_history.h"
 #include "model_input_transform.h"
+#include "ncnn_output_contract.h"
 
 #include <cstdint>
 #include <memory>
@@ -40,9 +41,7 @@ private:
     static constexpr int kHalfH = kModelH / 2;
     static constexpr int kYuv6Floats = 6 * kHalfW * kHalfH;
     static constexpr int kInputImageFloats = 12 * kHalfW * kHalfH;
-    static constexpr int kRecurrentFloats = 512;
-    static constexpr int kPrunedVizOutputFloats = 6267;
-    static constexpr int kPrunedVizParserFloats = 5755;
+    static constexpr int kRecurrentFloats = NcnnOutputContract::kRecurrentFloats;
 
     bool run_current_yuv6(std::vector<float> &raw_output, RunTiming *timing);
     void prepare_input_tensor();

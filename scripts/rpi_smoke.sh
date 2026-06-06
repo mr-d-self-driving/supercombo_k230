@@ -231,7 +231,7 @@ summarize_single() {
       validate_component_log model "${OUT_DIR}/model.log" 'rpi_modeld synthetic done frames=' "${SMOKE_MIN_MODEL_FPS:-1}" || check_rc=1
       ;;
     parity)
-      print_matches parity "${OUT_DIR}/parity.log" 'PREPROCESS_PARITY|IPC_ABI|verify_calibration_equivalence'
+      print_matches parity "${OUT_DIR}/parity.log" 'PREPROCESS_PARITY|IPC_ABI|NCNN_OUTPUT_CONTRACT|verify_calibration_equivalence'
       if ! grep -q 'PREPROCESS_PARITY result=PASS' "${OUT_DIR}/parity.log"; then
         echo "SMOKE_CHECK component=preprocess_parity result=FAIL"
         check_rc=1
@@ -243,6 +243,12 @@ summarize_single() {
         check_rc=1
       else
         echo "SMOKE_CHECK component=ipc_abi result=PASS"
+      fi
+      if ! grep -q 'NCNN_OUTPUT_CONTRACT result=PASS' "${OUT_DIR}/parity.log"; then
+        echo "SMOKE_CHECK component=ncnn_output_contract result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=ncnn_output_contract result=PASS"
       fi
       if ! grep -q 'verify_calibration_equivalence: PASS' "${OUT_DIR}/parity.log"; then
         echo "SMOKE_CHECK component=calibration_equivalence result=FAIL"
@@ -478,11 +484,13 @@ run_parity_checks() {
   reset_outputs
   require_executable check_preprocess_parity
   require_executable check_ipc_abi
+  require_executable check_ncnn_output_contract
   require_executable verify_calibration_equivalence
   local rc=0
   {
     "${ROOT_DIR}/check_preprocess_parity"
     "${ROOT_DIR}/check_ipc_abi"
+    "${ROOT_DIR}/check_ncnn_output_contract"
     "${ROOT_DIR}/verify_calibration_equivalence"
   } 2>&1 | tee "${OUT_DIR}/parity.log" || rc=$?
   summarize_single parity "${rc}"
@@ -859,7 +867,7 @@ append_check_step_summary() {
       parity)
         if [[ -f "${step_dir}/parity.log" ]]; then
           tr '\r' '\n' <"${step_dir}/parity.log" |
-            grep -E '^(PREPROCESS_PARITY|IPC_ABI|verify_calibration_equivalence)' |
+            grep -E '^(PREPROCESS_PARITY|IPC_ABI|NCNN_OUTPUT_CONTRACT|verify_calibration_equivalence)' |
             sed "s/^/CHECK_DETAIL step=${name} /" || true
         fi
         ;;

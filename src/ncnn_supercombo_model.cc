@@ -184,17 +184,7 @@ bool NcnnSupercomboModel::run_current_yuv6(std::vector<float> &raw_output, RunTi
     const uint64_t output_t0 = steady_ns_local();
     std::vector<float> full_output;
     copy_output_to_float(output.data, output.elembits(), output.total(), full_output);
-
-    if (full_output.size() >= recurrent_state_.size()) {
-        std::memcpy(recurrent_state_.data(),
-                    full_output.data() + full_output.size() - recurrent_state_.size(),
-                    recurrent_state_.size() * sizeof(float));
-    }
-    if (full_output.size() == kPrunedVizOutputFloats) {
-        raw_output.assign(full_output.begin(), full_output.begin() + kPrunedVizParserFloats);
-    } else {
-        raw_output.swap(full_output);
-    }
+    NcnnOutputContract::split_for_parser(full_output, raw_output, recurrent_state_);
     const uint64_t output_t1 = steady_ns_local();
     if (timing) timing->output_ms = elapsed_ms(output_t0, output_t1);
     return true;

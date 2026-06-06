@@ -45,7 +45,8 @@ cmake -S . -B build-rpi4 \
   -DCMAKE_BUILD_TYPE=Release
 cmake --build build-rpi4 \
   --target rpi_camerad rpi_modeld rpi_overlay \
-           check_preprocess_parity check_ipc_abi verify_calibration_equivalence \
+           check_preprocess_parity check_ipc_abi check_ncnn_output_contract \
+           verify_calibration_equivalence \
   -j$(nproc)
 ```
 
@@ -161,6 +162,7 @@ ncnn inference:
 ```text
 check_preprocess_parity
 check_ipc_abi
+check_ncnn_output_contract
 verify_calibration_equivalence
 ```
 
@@ -169,6 +171,7 @@ It prints machine-readable lines such as:
 ```text
 PREPROCESS_PARITY result=PASS identity_max0=0.0 identity_max1=0.0 ...
 IPC_ABI result=PASS header=40 ring_header=32 road_ai_frame=48 model_state=4360 ...
+NCNN_OUTPUT_CONTRACT result=PASS full=6267 parser=5755 recurrent=512 ...
 verify_calibration_equivalence: PASS
 ```
 
@@ -177,6 +180,10 @@ nonzero warp activity, and two-frame `[previous_yuv6, current_yuv6]` stacking.
 `check_ipc_abi` verifies shared ring dimensions/stride, latest-channel
 conflation, and `modelState` round trip for plan/lane/road-edge/lead/pose,
 calibration, and lateral-plan fields.
+`check_ncnn_output_contract` verifies the pruned ncnn output split:
+`6267 = 5755 parser payload + 512 recurrent state`, recurrent carryover,
+non-pruned fallback behavior, parser/modelState sanity, and that recurrent-tail
+sentinels do not leak into plan/lane/road-edge output.
 
 `perf` runs a short performance snapshot:
 
@@ -192,6 +199,9 @@ manager overlay_fb_2fps
 It writes detailed logs to `/tmp/rpi_smoke/perf*.log` and prints `PERF ...`
 summary lines. Use `PERF_MODEL_FRAMES=120` or `PERF_MANAGER_SEC=10` for longer,
 less noisy measurements.
+Run `check` and `perf` sequentially. The Pi is CPU-bound enough that running
+them at the same time can make short smoke windows miss `modelState` updates and
+produce misleading failures.
 
 `perf` also applies conservative pass/fail thresholds:
 
@@ -431,8 +441,9 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `scripts/rpi_smoke.sh replay` without dump | camera `29.36 fps`, model `17.36 fps`, overlay `~10 fps`, errors `0` |
 | `DUMP=1 scripts/rpi_smoke.sh replay` short smoke | `overlay.ppm` generated, errors `0` |
 | `DUMP=1 scripts/rpi_smoke.sh replay` with dump verification | PPM `480x320`, mean `94.44`, min `0`, max `255`, errors `0` |
-| `scripts/rpi_smoke.sh parity` | preprocess parity, IPC ABI/modelState round trip, and calibration equivalence all `PASS` |
+| `scripts/rpi_smoke.sh parity` | preprocess parity, IPC ABI/modelState round trip, ncnn output contract, and calibration equivalence all `PASS` |
 | short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS`, camera `39.36 fps`, camera-file `61.96 fps`, synthetic pipeline camera `30.24 fps`, model `12.97 fps`, overlay consumed `model_seq=6`, profile total `59.41 ms` |
+| post-ncnn-contract short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS` including `NCNN_OUTPUT_CONTRACT`, camera `39.42 fps`, camera-file `76.84 fps`, synthetic pipeline camera `30.43 fps`, model `9.99 fps`, overlay consumed `model_seq=6`, profile total `68.77 ms` |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 | manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
@@ -452,6 +463,7 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `performance` governor, model-only 80 frames | model `19.34 fps`, no improvement over ondemand |
 | `performance` governor, manager no-overlay 8 sec | camera `29.11 fps`, model `18.33 fps`, temp rose to `71.5C`; restored to `ondemand` |
 | post-parity-refactor `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | default model retry `18.02 fps`, threads3 `15.45 fps`, input BF16 `18.69 fps`, no-overlay manager camera `29.16 fps` / model `18.19 fps`, headless overlay model `14.97 fps`, fb overlay model `16.90 fps`; all checks `PASS` |
+| post-ncnn-contract `scripts/rpi_smoke.sh perf`, 40 model frames / 4 sec manager | default model retry `8.18 fps` after a cold outlier, threads3 `16.24 fps`, input BF16 `19.07 fps`, no-overlay manager camera `29.13 fps` / model `18.22 fps`, headless overlay model `17.11 fps`, fb overlay model `15.27 fps`; all checks `PASS` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
