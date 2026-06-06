@@ -112,16 +112,63 @@ ncnnoptimize \
   supercombo_no_big_drop_pruned_viz.bin \
   supercombo_no_big_drop_pruned_viz_opt.param \
   supercombo_no_big_drop_pruned_viz_opt.bin \
-  <flag>
+  0
 ```
 
-The historical `ncnnoptimize` flag was not logged when the deployed pair was
-created. Current ncnn source shows `flag == 65536` or `flag == 1` selects
-`storage_type = 1`; any other flag selects `storage_type = 0`.
+The deployed pair was reproduced byte-identically on the Pi from the recorded
+`supercombo_no_big_drop_pruned_viz.onnx` using ncnn source
+`882f319defcdd29440eabff7bc6e493c913f29e7` and `ncnnoptimize` flag `0`.
 
-Do not claim a clean rebuild is byte-identical until `onnx2ncnn` and
-`ncnnoptimize` are rebuilt from the recorded ncnn source and the flag is tested
-against the deploy pair hashes above.
+The tool rebuild used:
+
+```text
+onnx2ncnn:
+  /home/chan/onnx_bench/ncnn-build-onnx2ncnn-repro/build/onnx/onnx2ncnn
+ncnnoptimize:
+  /tmp/ncnn-tools-a72/tools/ncnnoptimize
+```
+
+Reproduction command:
+
+```sh
+scripts/reproduce_rpi_ncnn_model.sh
+```
+
+Equivalent expanded command:
+
+```sh
+onnx2ncnn \
+  /home/chan/onnx_bench/supercombo_no_big_drop_pruned_viz.onnx \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz.param \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz.bin
+
+ncnnoptimize \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz.param \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz.bin \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz_opt.param \
+  /home/chan/onnx_bench/ncnn-repro-model/supercombo_no_big_drop_pruned_viz_opt.bin \
+  0
+```
+
+Verification result:
+
+```text
+NCNN_REPRO result=MATCH flag=0
+  param e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2
+  bin   88dc46956eb5255265c9695a29dc4fba7ec6e419e5af26de137df756c3ec277b
+
+NCNN_REPRO result=MISS flag=1
+  param e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2
+  bin   8b8931050fdd54015a9f55ddb5a524accf4df37ac18cc37d508371b94d75051e
+
+NCNN_REPRO result=MISS flag=65536
+  param e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2
+  bin   8b8931050fdd54015a9f55ddb5a524accf4df37ac18cc37d508371b94d75051e
+```
+
+Current ncnn source shows `flag == 65536` or `flag == 1` selects
+`storage_type = 1`; any other flag selects `storage_type = 0`. The deployed
+model uses the `storage_type = 0` path.
 
 ## Runtime BF16 note
 

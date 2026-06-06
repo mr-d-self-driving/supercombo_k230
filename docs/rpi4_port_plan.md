@@ -297,10 +297,10 @@ headless/no-overlay.
 - The current RPi overlay reads the AI ring for display, unlike K230 preview.
   This is acceptable for validation, but it can hide display-specific K230
   issues.
-- Current model hashes, source ONNX hashes, ncnn source revision, and conversion
-  flow are recorded in `docs/rpi4_model_provenance.md`. A byte-identical clean
-  rebuild is still unproven because the historical `ncnnoptimize` flag was not
-  logged and must be tested against the recorded hashes.
+- Current model hashes, source ONNX hashes, ncnn source revision, conversion
+  flow, and byte-identical clean rebuild result are recorded in
+  `docs/rpi4_model_provenance.md`. The deployed pair was reproduced with
+  `ncnnoptimize flag=0`; `flag=1` and `flag=65536` mismatched the `.bin` hash.
 - BF16 input conversion has shown mixed results between artifact-level and
   repo-level smokes, so both default float input and `RPI_NCNN_INPUT_BF16=1`
   should remain in performance checks until the result is stable.
