@@ -317,6 +317,16 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
   target_include_directories(verify_calibration_equivalence PRIVATE ${PROJECT_LOCAL_INCLUDES})
   target_compile_options(verify_calibration_equivalence PRIVATE ${PROJECT_WARNINGS})
 
+  if(SUPERCOMBO_BUILD_RPI4)
+    install(TARGETS
+      check_preprocess_parity
+      check_ipc_abi
+      check_ncnn_output_contract
+      verify_calibration_equivalence
+      RUNTIME DESTINATION .
+    )
+  endif()
+
   if(SUPERCOMBO_BUILD_RUNTIME)
     add_executable(bench_capture_nv12 benchmarks/bench_capture_nv12.cc)
     configure_k230_target(bench_capture_nv12 mmz ${K230_SHARED_LIBS})

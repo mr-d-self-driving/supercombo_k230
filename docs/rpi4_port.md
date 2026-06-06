@@ -68,6 +68,7 @@ Optional install tree:
 ```sh
 cmake --install build-rpi4 --prefix /home/chan/supercombo_k230_rpi_install
 cd /home/chan/supercombo_k230_rpi_install
+scripts/rpi_smoke.sh parity
 scripts/rpi_smoke.sh replay
 ```
 
@@ -78,6 +79,11 @@ directory:
 ```sh
 RPI_RUNTIME_DIR=/path/to/runtime scripts/rpi_smoke.sh check
 ```
+
+When `SUPERCOMBO_BUILD_BENCHMARKS=ON` and `SUPERCOMBO_BUILD_RPI4=ON`, the
+install tree includes the parity binaries needed by the default aggregate
+`check`: `check_preprocess_parity`, `check_ipc_abi`,
+`check_ncnn_output_contract`, and `verify_calibration_equivalence`.
 
 ## Model
 
@@ -444,6 +450,7 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | `scripts/rpi_smoke.sh parity` | preprocess parity, IPC ABI/modelState round trip, ncnn output contract, and calibration equivalence all `PASS` |
 | short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS`, camera `39.36 fps`, camera-file `61.96 fps`, synthetic pipeline camera `30.24 fps`, model `12.97 fps`, overlay consumed `model_seq=6`, profile total `59.41 ms` |
 | post-ncnn-contract short `scripts/rpi_smoke.sh check` with parity/profile | parity `PASS` including `NCNN_OUTPUT_CONTRACT`, camera `39.42 fps`, camera-file `76.84 fps`, synthetic pipeline camera `30.43 fps`, model `9.99 fps`, overlay consumed `model_seq=6`, profile total `68.77 ms` |
+| install-tree `scripts/rpi_smoke.sh parity` and short `check` from `/tmp/supercombo_k230_rpi_install_test` | parity `PASS`, synthetic pipeline camera `29.83 fps`, model `11.32 fps`, manager camera `29.25 fps` / model `12.45 fps`, profile total `67.73 ms`; installed `rpi_*` paths used |
 | `RPI_PROFILE_MODEL=1` model-only steady state | warp `~1.8 ms`, input `~1.1 ms`, ncnn infer `~46.5 ms`, output `~0.02 ms` |
 | `RPI_PROFILE_MODEL=1` replay pipeline | model `18.79 fps`, warp `1.79 ms`, input `1.15 ms`, ncnn infer `47.61 ms`, output `0.02 ms` |
 | manager, overlay off | camera `29.09 fps`, model `18.70 fps`, errors `0` |
