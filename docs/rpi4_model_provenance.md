@@ -181,3 +181,6 @@ use_bf16_packed = true
 ```
 
 `RPI_NCNN_INPUT_BF16=1` remains a performance comparison option, not the default.
+On the replay fixture, `scripts/rpi_smoke.sh compare-input` showed large output
+drift for BF16 input relative to float input, so the default runtime input path
+must keep float `input_imgs` unless a later accuracy test proves otherwise.

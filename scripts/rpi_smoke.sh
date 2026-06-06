@@ -33,6 +33,7 @@ reset_outputs() {
         "${OUT_DIR}/manager.log" \
         "${OUT_DIR}/artifacts.log" \
         "${OUT_DIR}/parity.log" \
+        "${OUT_DIR}/compare_input.log" \
         "${OUT_DIR}/frame_metadata.log" \
         "${OUT_DIR}/perf.log" \
         "${OUT_DIR}/probe.log" \
@@ -350,6 +351,15 @@ summarize_single() {
         check_rc=1
       else
         echo "SMOKE_CHECK component=calibration_equivalence result=PASS"
+      fi
+      ;;
+    compare-input)
+      print_matches compare-input "${OUT_DIR}/compare_input.log" 'NCNN_INPUT_BF16_COMPARE'
+      if ! grep -q 'NCNN_INPUT_BF16_COMPARE result=PASS' "${OUT_DIR}/compare_input.log"; then
+        echo "SMOKE_CHECK component=compare_input result=FAIL"
+        check_rc=1
+      else
+        echo "SMOKE_CHECK component=compare_input result=PASS"
       fi
       ;;
     camera)
@@ -751,6 +761,24 @@ run_parity_checks() {
     "${ROOT_DIR}/verify_calibration_equivalence"
   } 2>&1 | tee "${OUT_DIR}/parity.log" || rc=$?
   summarize_single parity "${rc}"
+}
+
+run_input_bf16_compare() {
+  require_file "${MODEL_PARAM}"
+  require_file "${MODEL_BIN}"
+  require_executable compare_ncnn_input_bf16
+  reset_outputs
+  set +e
+  "${ROOT_DIR}/compare_ncnn_input_bf16" "${MODEL_PARAM}" "${MODEL_BIN}" \
+    2>&1 | tee "${OUT_DIR}/compare_input.log"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  local summary_rc=0
+  summarize_single compare-input "${rc}" || summary_rc=$?
+  if [[ "${rc}" -ne 0 || "${summary_rc}" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
 }
 
 run_camera_only() {
@@ -1376,6 +1404,9 @@ case "${MODE}" in
   parity)
     run_parity_checks
     ;;
+  compare-input)
+    run_input_bf16_compare
+    ;;
   camera)
     run_camera_only synthetic
     ;;
@@ -1407,7 +1438,7 @@ case "${MODE}" in
     run_check_suite
     ;;
   *)
-    echo "usage: $0 {artifacts|model|profile|parity|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
+    echo "usage: $0 {artifacts|model|profile|parity|compare-input|camera|camera-file|camera-replay|camera-real|camera-probe|synthetic|replay|manager|perf|check}" >&2
     exit 2
     ;;
 esac

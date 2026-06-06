@@ -43,6 +43,10 @@ Available utilities:
 - `check_ncnn_output_contract`: pruned ncnn output split, recurrent-state
   carryover, parser payload gating, fallback behavior, and modelState sanity
   check.
+- `compare_ncnn_input_bf16`: Raspberry Pi ncnn-only diagnostic. Runs the same
+  synthetic or `SCNV12` replay frames through float-input and BF16-input model
+  instances, then reports raw/plan/lane/road-edge drift. Use it before changing
+  the `RPI_NCNN_INPUT_BF16` default.
 - `verify_calibration_equivalence`: checks the pose-based online calibration
   state machine, manual/online model-input feedback policy, medmodel homography
   matrix, `transform_scale_buffer(0.5)` UV handling, and YUV6 plane order

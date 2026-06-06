@@ -45,9 +45,9 @@ the plan concrete. Their findings are part of the porting baseline:
   `supercombo_no_big_drop_pruned_viz_opt.{param,bin}` files.
 - The pruned ncnn output is `6267` floats: the first `5755` feed
   `ModelOutputParser`, and the last `512` are recurrent state.
-- `rpi_camerad` metadata is not yet equivalent to K230 crop metadata. Downstream
-  code must not rely on those metadata fields for calibration/provenance until
-  they are fixed and tested.
+- `rpi_camerad` metadata now has smoke coverage for synthetic, replay, and
+  camera-file sources. Real-camera crop/FOV metadata still needs validation
+  once a physical camera is visible.
 
 ## Subagent Strategy
 

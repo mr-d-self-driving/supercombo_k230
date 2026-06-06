@@ -241,7 +241,11 @@ if(SUPERCOMBO_BUILD_RPI4)
 
   install(TARGETS rpi_camerad rpi_modeld rpi_overlay RUNTIME DESTINATION .)
   install(PROGRAMS rpi_manager.py DESTINATION .)
-  install(PROGRAMS scripts/rpi_smoke.sh DESTINATION scripts)
+  install(PROGRAMS
+    scripts/rpi_smoke.sh
+    scripts/reproduce_rpi_ncnn_model.sh
+    DESTINATION scripts
+  )
 endif()
 
 if(SUPERCOMBO_BUILD_BENCHMARKS)
@@ -331,12 +335,23 @@ if(SUPERCOMBO_BUILD_BENCHMARKS)
   target_compile_options(verify_calibration_equivalence PRIVATE ${PROJECT_WARNINGS})
 
   if(SUPERCOMBO_BUILD_RPI4)
+    add_executable(compare_ncnn_input_bf16
+      benchmarks/compare_ncnn_input_bf16.cc
+      src/ncnn_supercombo_model.cc
+      src/ncnn_output_contract.cc
+    )
+    configure_rpi_target(compare_ncnn_input_bf16 supercombo_rpi_core ${NCNN_LIBRARY})
+    if(OpenMP_CXX_FOUND)
+      target_link_libraries(compare_ncnn_input_bf16 PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
     install(TARGETS
       check_preprocess_parity
       check_ipc_abi
       check_frame_metadata
       check_ncnn_output_contract
       verify_calibration_equivalence
+      compare_ncnn_input_bf16
       RUNTIME DESTINATION .
     )
   endif()

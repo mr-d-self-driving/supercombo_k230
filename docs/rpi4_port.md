@@ -118,6 +118,7 @@ scripts/rpi_smoke.sh model
 scripts/rpi_smoke.sh profile
 scripts/rpi_smoke.sh artifacts
 scripts/rpi_smoke.sh parity
+scripts/rpi_smoke.sh compare-input
 scripts/rpi_smoke.sh camera-probe
 scripts/rpi_smoke.sh camera
 scripts/rpi_smoke.sh camera-file
@@ -228,6 +229,20 @@ sentinels do not leak into plan/lane/road-edge output.
 reads the latest `roadAiFrame` shared-memory message and checks the `512x256`
 NV12 frame contract, ring dimensions, slot bounds, and source crop metadata.
 
+`compare-input` is a Raspberry Pi ncnn input-precision diagnostic. It loads the
+same model twice, once with float `input_imgs` and once with
+`RPI_NCNN_INPUT_BF16=1`, then reports raw/plan/lane/road-edge drift for the
+same synthetic or replay frames:
+
+```sh
+COMPARE_FRAMES=20 \
+COMPARE_REPLAY_NV12=/home/chan/supercombo_models/replay_120.scnv12 \
+scripts/rpi_smoke.sh compare-input
+```
+
+This command is intentionally not part of the default aggregate `check`; use it
+when considering ncnn input-precision changes.
+
 `perf` runs a short performance snapshot:
 
 ```text
@@ -245,9 +260,11 @@ summary lines. Model cases also enable `RPI_PROFILE_MODEL=1` and report
 `PERF_MODEL_WARMUP_FRAMES` frames. The default warmup is `10`, or
 `RPI_PROFILE_WARMUP_FRAMES` when set. Use `PERF_MODEL_FRAMES=120` or
 `PERF_MANAGER_SEC=10` for longer, less noisy measurements.
-Run `check` and `perf` sequentially. The Pi is CPU-bound enough that running
-them at the same time can make short smoke windows miss `modelState` updates and
-produce misleading failures.
+Run smoke commands sequentially unless each command has a distinct `OUT_DIR`.
+The wrapper resets files under `/tmp/rpi_smoke` by default, so parallel runs can
+delete each other's logs. The Pi is also CPU-bound enough that running `check`
+and `perf` at the same time can make short smoke windows miss `modelState`
+updates and produce misleading failures.
 
 `perf` also applies conservative pass/fail thresholds:
 
@@ -532,6 +549,9 @@ On Raspberry Pi 4, Cortex-A72, OpenCV 4.10.0, ncnn BF16:
 | short `scripts/rpi_smoke.sh check` with frame metadata gate | artifacts/parity/profile `PASS`; `binary_check_frame_metadata` sha256 `ab0b6653f16c444a03544c01203f5d8366d55286b5b929f5dd077e686fc0b6f3`; camera `39.39 fps` metadata crop `0,0,512,256`; camera-file `92.62 fps` metadata crop `0,0,1024,512`; synthetic pipeline camera/model `29.82 / 12.66 fps`; manager camera/model `29.18 / 14.14 fps`; profile p95 total/infer `63.09 / 60.15 ms`; throttled `0x0` |
 | model provenance artifact smoke | `ARTIFACT_CHECK result=PASS`; no-big ONNX sha256 `e912010c4f1d045d9915a4fe57690682d89c6db7d0256fedc0f54c28546c98de`; pruned-viz ONNX sha256 `60963ef873ed6769ba89d6e52938801abb41662a7ff7d30e57abc9deb4db33a3`; deploy param/bin sha256 `e3c588c6725a950b057ed7fa51559b16b5b306e5c6934c86391722915226b8c2` / `88dc46956eb5255265c9695a29dc4fba7ec6e419e5af26de137df756c3ec277b`; ncnn source head `882f319defcdd29440eabff7bc6e493c913f29e7`; throttled `0x0` |
 | ncnn clean rebuild reproducibility | rebuilt `onnx2ncnn` and `ncnnoptimize` from ncnn source `882f319defcdd29440eabff7bc6e493c913f29e7`; `ncnnoptimize flag=0` reproduced deploy param/bin byte-identically; `flag=1` and `flag=65536` mismatched `.bin` |
+| latest short `CHECK_WITH_PROFILE=1 scripts/rpi_smoke.sh check` | artifacts/parity/profile `PASS`; synthetic camera/model `29.72 / 10.69 fps`; manager camera/model `29.00 / 14.28 fps`; replay camera/model `29.77 / 12.57 fps`; profile p95 total/infer `57.26 / 54.46 ms`; replay and synthetic PPM dumps nonblank |
+| latest `scripts/rpi_smoke.sh perf`, 60 model frames / 4 sec manager | default model `11.13 fps`, threads3 `12.82 fps`, input_bf16 `18.09 fps`; manager no_overlay camera/model `29.17 / 17.37 fps`, headless overlay `29.14 / 17.02 fps`, fb overlay `29.34 / 16.60 fps`; all `PERF_CHECK` gates `PASS` |
+| `compare-input`, replay 20 frames | `RPI_NCNN_INPUT_BF16=1` is not accuracy-compatible with float input: raw mean/max abs `1.229 / 62.0`, plan mean/end L2 `17.08 / 44.23`, lane y mean/max abs `2.158 / 25.047`, road-edge y mean/max abs `7.014 / 33.938`, best-plan mismatch `7/20`; recommendation `float` |
 
 `missed` frames in modeld are expected because the camera publishes at about 30 fps while
 the CPU model consumes about 18-20 fps using latest/conflate behavior.
@@ -564,12 +584,11 @@ Quick ncnn option sweep, 50 synthetic frames:
 | `threads=4`, `RPI_NCNN_INPUT_BF16=0` | `19.00` |
 | `threads=4`, `RPI_NCNN_BF16=0`, `RPI_NCNN_INPUT_BF16=0` | `9.18` |
 
-Longer 120-frame confirmation was `19.41 fps` with BF16 input conversion and
-`19.53 fps` without it, so the default skips input BF16 conversion. Later
-post-camera-bound FPS-only sweeps were mixed, but the follow-up profile still
-favored float input: `RPI_NCNN_INPUT_BF16=0` averaged `53.79 ms/frame`, while
-`RPI_NCNN_INPUT_BF16=1` averaged `80.61 ms/frame`. Keep `RPI_NCNN_INPUT_BF16=1`
-as a perf comparison option, not the default.
+Longer 120-frame profile samples have varied with scheduling, and some runs
+show `RPI_NCNN_INPUT_BF16=1` improving model-only FPS. Do not make it the
+default anyway: `compare-input` on the replay fixture shows large model-output
+drift relative to float input. Keep `RPI_NCNN_INPUT_BF16=1` as a performance
+experiment only; the default remains float `input_imgs`.
 
 ## Current Real Camera Status
 
