@@ -452,8 +452,14 @@ Latest probe on the Pi:
 ```text
 lsusb: only Linux root hub and VIA hub are listed
 rpicam-vid --list-cameras: No cameras available
-vcgencmd get_camera: supported=0 detected=0, libcamera interfaces=0
+CAMERA_PROBE_V4L2 candidates=0
+CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=0
 ```
+
+The visible `/dev/video*` nodes are Raspberry Pi codec/ISP/helper nodes. Some of
+them advertise `Video Capture`, but `camera-probe` marks them as
+`candidate=0 reason=platform_or_helper_capture`, not as usable live camera input
+for `rpi_camerad`.
 
 Kernel log still shows the original UVC failure path:
 
@@ -475,3 +481,8 @@ RPI_CAMERA_SOURCE=/dev/video0 scripts/rpi_smoke.sh camera-real
 `camera-probe` is expected to fail while no USB UVC or CSI camera is visible.
 It records `lsusb`, V4L2 device listing, `rpicam-vid --list-cameras`, and recent
 camera/USB kernel messages to `/tmp/rpi_smoke/probe.log`.
+It also prints `CAMERA_PROBE_NODE` lines for every `/dev/video*` node. Use nodes
+with `candidate=1` as `RPI_CAMERA_SOURCE=/dev/videoX`. Raspberry Pi codec/ISP
+helper nodes can expose `Video Capture` capabilities but are reported as
+`candidate=0 reason=platform_or_helper_capture`, so do not use those as the live
+camera source for this OpenCV path.

@@ -261,6 +261,54 @@ require_executable() {
   fi
 }
 
+probe_v4l2_nodes() {
+  local candidates=0
+  local dev info formats driver card bus capture external candidate reason
+  shopt -s nullglob
+  for dev in /dev/video*; do
+    info="$(v4l2-ctl -d "${dev}" -D 2>/dev/null || true)"
+    if [[ -z "${info}" ]]; then
+      echo "CAMERA_PROBE_NODE device=${dev} candidate=0 reason=v4l2_query_failed"
+      continue
+    fi
+    driver="$(sed -n 's/^[[:space:]]*Driver name[[:space:]]*:[[:space:]]*//p' <<<"${info}" | head -n 1)"
+    card="$(sed -n 's/^[[:space:]]*Card type[[:space:]]*:[[:space:]]*//p' <<<"${info}" | head -n 1)"
+    bus="$(sed -n 's/^[[:space:]]*Bus info[[:space:]]*:[[:space:]]*//p' <<<"${info}" | head -n 1)"
+    formats="$(v4l2-ctl -d "${dev}" --list-formats-ext 2>/dev/null |
+      sed -n "s/^[[:space:]]*\\[[0-9]\\+\\]: '\\([^']*\\)'.*/\\1/p" |
+      paste -sd, - | cut -c1-120)"
+
+    capture=0
+    external=0
+    candidate=0
+    reason="not_capture_source"
+    if grep -Eq '(^|[[:space:]])Video Capture($|[[:space:]])' <<<"${info}" &&
+        ! grep -Eq 'Metadata Capture|Memory-to-Memory' <<<"${info}"; then
+      capture=1
+    fi
+    if [[ "${driver}" == "uvcvideo" || "${bus}" == usb-* ]]; then
+      external=1
+    fi
+    if [[ "${capture}" -eq 1 && "${external}" -eq 1 ]]; then
+      candidate=1
+      reason="external_capture"
+      candidates=$((candidates + 1))
+    elif [[ "${capture}" -eq 1 ]]; then
+      reason="platform_or_helper_capture"
+    fi
+
+    driver="${driver// /_}"
+    card="${card// /_}"
+    bus="${bus// /_}"
+    formats="${formats// /_}"
+
+    echo "CAMERA_PROBE_NODE device=${dev} candidate=${candidate} capture=${capture} external=${external} driver=${driver:-unknown} card=${card:-unknown} bus=${bus:-unknown} formats=${formats:-none} reason=${reason}"
+  done
+  shopt -u nullglob
+  echo "CAMERA_PROBE_V4L2 candidates=${candidates}"
+  return 0
+}
+
 run_camera_probe() {
   reset_outputs
   set +e
@@ -272,6 +320,8 @@ run_camera_probe() {
     echo "=== v4l2 devices ==="
     if command -v v4l2-ctl >/dev/null; then
       v4l2-ctl --list-devices 2>&1
+      echo "=== v4l2 capture candidates ==="
+      probe_v4l2_nodes
     else
       echo "v4l2-ctl missing"
     fi
@@ -287,21 +337,25 @@ run_camera_probe() {
 
   local has_usb_camera=1
   local has_csi_camera=1
+  local v4l2_candidates=0
   if lsusb 2>/dev/null | grep -Eiq 'camera|webcam|web camera|uvc|video'; then
     has_usb_camera=0
+  fi
+  if command -v v4l2-ctl >/dev/null; then
+    v4l2_candidates="$(grep -Ec '^CAMERA_PROBE_NODE .*candidate=1' "${OUT_DIR}/probe.log" 2>/dev/null || true)"
   fi
   if command -v rpicam-vid >/dev/null &&
       ! rpicam-vid --list-cameras 2>&1 | grep -Fq 'No cameras available'; then
     has_csi_camera=0
   fi
   local rc=1
-  if [[ "${has_usb_camera}" -eq 0 || "${has_csi_camera}" -eq 0 ]]; then
+  if [[ "${has_usb_camera}" -eq 0 || "${has_csi_camera}" -eq 0 || "${v4l2_candidates}" -gt 0 ]]; then
     rc=0
   fi
   if [[ "${rc}" -eq 0 ]]; then
-    echo "CAMERA_PROBE result=PASS usb_candidate=$((1 - has_usb_camera)) csi_candidate=$((1 - has_csi_camera))"
+    echo "CAMERA_PROBE result=PASS usb_candidate=$((1 - has_usb_camera)) csi_candidate=$((1 - has_csi_camera)) v4l2_candidates=${v4l2_candidates}"
   else
-    echo "CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0"
+    echo "CAMERA_PROBE result=FAIL usb_candidate=0 csi_candidate=0 v4l2_candidates=${v4l2_candidates}"
   fi | tee -a "${OUT_DIR}/probe.log"
   set -e
   summarize_single camera-probe "${rc}"
