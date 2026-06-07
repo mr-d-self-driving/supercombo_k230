@@ -75,12 +75,28 @@ K230_PANDA_SAFETY=hyundaiCommunity \
 
 This still does not transmit CAN unless `K230_PANDA_TX=1` is set.
 
+K230 board note:
+
+- `k230_controlsd.py` is intentionally a thin wrapper around the existing
+  openpilot Python Hyundai stack. The board must have a matching openpilot
+  checkout and built Python modules available through `K230_OPENPILOT_PATH`.
+- A board with only this runtime installed can still run `k230_pandad` shadow
+  mode, but `k230_controlsd.py` cannot initialize without `cereal`, `selfdrive`,
+  and `opendbc`.
+- Latest smoke check on `root@192.168.219.106` verified `python3 -m py_compile`
+  for `k230_controlsd.py` and `k230_manager.py`, and `ldd ./k230_pandad`
+  resolved `libusb-1.0`, `libudev`, and `libcap`.
+- With `K230_ENABLE_PANDA=1 K230_PANDA_TX=0`, panda connected over USB in
+  shadow mode. No vehicle harness was connected, so `rx=0`, `ignition=0/0`,
+  and zero CAN traffic are expected and only prove panda USB communication.
+
 Local replay validation from collected logs:
 
 ```sh
 uv venv /tmp/k230_openpilot_py311 --python 3.11
 uv pip install --python /tmp/k230_openpilot_py311/bin/python \
-  'scons==4.2.0' 'numpy<2' pycapnp Cython pycryptodome jinja2 crcmod
+  'scons==4.2.0' 'numpy<2' pycapnp Cython pycryptodome jinja2 crcmod \
+  casadi pyserial smbus2
 
 cd /Users/chan/Documents/openpilot_c2
 PATH=/tmp/k230_openpilot_py311/bin:$PATH \
@@ -96,31 +112,73 @@ PYTHONPATH=/Users/chan/Documents/openpilot_c2:/Users/chan/Documents/openpilot_c2
 K230_OPENPILOT_PATH=/Users/chan/Documents/openpilot_c2 \
 K230_IPC_DIR=/tmp/k230_ipc_control_test \
 K230_CONTROLD_FINGERPRINT_MIN_ADDRS=20 \
+K230_CONTROLD_USE_OPENPILOT_PLANNER=0 \
 ./k230_controlsd.py
 
 K230_IPC_DIR=/tmp/k230_ipc_control_test \
 benchmarks/replay_controlsd_from_rlog.py \
-  /Users/chan/Documents/openpilot_c2/device_collected/2026-05-23_1600_combined/part0_existing_device_realdata/1970-01-01--09-00-59--0/rlog.bz2 \
+  /Users/chan/Documents/openpilot_c2/device_collected/2026-05-23_1600_combined/part1_20260523_174953/1970-01-01--09-00-59--26/rlog.bz2 \
   --openpilot /Users/chan/Documents/openpilot_c2 \
-  --max-can-events 1000 \
-  --sleep-scale 0.2 \
+  --max-can-events 3000 \
+  --sleep-scale 0.05 \
   --curvature 0.01
 ```
 
-Observed result on Mac with a Python 3.11 openpilot build:
+CAN log inspection:
 
-- `can_events=1000`
-- `can_frames=50716`
-- `send_batches=901`
-- `send_frames=3154`
-- top generated send addresses:
-  - `bus0:0x340`
-  - `bus1:0x340`
-  - `bus2:0x251`
-  - `bus1:0x4f1`
-- `k230_controlsd.py` runtime log reported `errors=0` after default-param shim
-  fixes. Exact `send_batches` can vary slightly with controller startup timing
-  during replay.
+```sh
+PYTHONPATH=/Users/chan/Documents/openpilot_c2:/Users/chan/Documents/openpilot_c2/pyextra \
+/tmp/k230_openpilot_py311/bin/python benchmarks/analyze_can_rlog.py \
+  --openpilot /Users/chan/Documents/openpilot_c2 \
+  --max-can-events 2000 \
+  /Users/chan/Documents/openpilot_c2/device_collected/2026-05-23_1600_combined/part1_20260523_174953/1970-01-01--09-00-59--26/rlog.bz2
+```
+
+Observed result on Mac with a Python 3.11 openpilot build, using the collected
+K7 YG HEV rlog above:
+
+- Input log summary:
+  - `can_events=2000`
+  - `can_frames=104896`
+  - CAN frame rate from log timestamps: `5247.4 frames/s`
+  - returned/rejected/TX echo style sources: `71088`
+  - top RX buses: `bus130`, `bus129`, `bus0`, `bus128`, `bus1`, `bus2`
+  - original openpilot `sendcan` top addresses:
+    - `bus0:0x340`
+    - `bus255:0x340`
+    - `bus1:0x340`
+    - `bus2:0x251`
+    - `bus0:0x38d`, `0x420`, `0x421`, `0x389`
+    - `bus1:0x4f1`
+- Clean `k230_controlsd.py` replay:
+  - `candidate=KIA K7 HYBRID (YG)`
+  - `latTune=torque`
+  - `sccBus=-1`
+  - `mdpsBus=1`
+  - `sasBus=1`
+  - `safety=hyundaiCommunity:0`
+  - `fingerprint_addrs=23`
+  - `model=1`
+  - `lat_plan=1`
+  - `mpc=1`
+  - `errors=0`
+- Replay output:
+  - `can_events=3000`
+  - `can_frames=157386`
+  - `published_frames=50724`
+  - `dropped_frames=106662`
+  - `send_batches=1367`
+  - `send_frames=4790`
+  - top generated send addresses:
+    - `bus0:0x340`
+    - `bus1:0x340`
+    - `bus2:0x251`
+    - `bus1:0x4f1`
+- `bus255:0x340` appears in the original openpilot `sendcan` log because
+  `sccBus=-1` is serialized through the unsigned Cap'n Proto field. It is not
+  sent by openpilot boardd: `Panda::pack_can_buffer()` drops buses outside the
+  active panda range before USB packing. `k230_controlsd.py` follows the same
+  policy by accepting TX buses `0..3` only.
 
 Payload/codec validation:
 

@@ -484,6 +484,8 @@ class K230ModelSnapshot:
     road_edges: List[List[ModelPoint]] = None
     road_edge_stds: List[float] = None
     desire_state: List[float] = None
+    lateral_target: LateralTarget = None
+    lateral_plan: LateralPlan = None
 
     def __post_init__(self):
         if self.model_t is None:
@@ -508,6 +510,10 @@ class K230ModelSnapshot:
             self.road_edge_stds = [0.0] * 2
         if self.desire_state is None:
             self.desire_state = [0.0] * DESIRE_LEN
+        if self.lateral_target is None:
+            self.lateral_target = LateralTarget()
+        if self.lateral_plan is None:
+            self.lateral_plan = LateralPlan()
 
 
 def unpack_float_list(payload: bytes, offset: int, count: int) -> Tuple[List[float], int]:
@@ -552,6 +558,8 @@ def decode_k230_model_state(payload: bytes) -> Optional[K230ModelSnapshot]:
     except struct.error:
         return None
 
+    lateral_target, lateral_plan = decode_model_control(payload)
+
     return K230ModelSnapshot(frame_id=frame_id,
                              capture_timestamp_ns=capture_ts,
                              model_timestamp_ns=model_ts,
@@ -566,7 +574,26 @@ def decode_k230_model_state(payload: bytes) -> Optional[K230ModelSnapshot]:
                              lane_stds=lane_stds,
                              road_edges=road_edges,
                              road_edge_stds=road_edge_stds,
-                             desire_state=desire_state)
+                             desire_state=desire_state,
+                             lateral_target=lateral_target,
+                             lateral_plan=lateral_plan)
+
+
+def decode_model_snapshot(payload: bytes) -> Optional[K230ModelSnapshot]:
+    full_snapshot = decode_k230_model_state(payload)
+    if full_snapshot is not None:
+        return full_snapshot
+
+    target, plan = decode_model_control(payload)
+    if not target.valid and not plan.valid:
+        return None
+
+    return K230ModelSnapshot(frame_id=0,
+                             capture_timestamp_ns=now_ns(),
+                             model_timestamp_ns=now_ns(),
+                             valid=True,
+                             lateral_target=target,
+                             lateral_plan=plan)
 
 
 def xyzt_message(points: List[ModelPoint], t_values: List[float]) -> DummyMessage:
@@ -739,8 +766,11 @@ class OpenpilotHyundaiController:
         from selfdrive.controls.lib.latcontrol_lqr import LatControlLQR
         from selfdrive.controls.lib.latcontrol_pid import LatControlPID
         from selfdrive.controls.lib.latcontrol_torque import LatControlTorque
-        from selfdrive.controls.lib.lateral_planner import LateralPlanner
         from selfdrive.controls.lib.vehicle_model import VehicleModel
+        if env_enabled("K230_CONTROLD_USE_OPENPILOT_PLANNER", True):
+            from selfdrive.controls.lib.lateral_planner import LateralPlanner
+        else:
+            LateralPlanner = None
 
         self.car = car
         self.log = log
@@ -751,6 +781,7 @@ class OpenpilotHyundaiController:
         self.CP = CarInterface.get_params(self.candidate, self.fingerprint)
         self.CI = CarInterface(self.CP, CarController, CarState)
         self.enabled = env_enabled("K230_CONTROLD_ENABLED", True)
+        self.use_openpilot_planner = LateralPlanner is not None
         self.VM = VehicleModel(self.CP)
         self.LaC = self.make_lateral_controller({
             "angle": LatControlAngle,
@@ -772,8 +803,8 @@ class OpenpilotHyundaiController:
         self.last_control_curvature = 0.0
         self.last_planner_frame_id = None
         self.lateral_plan = LateralPlan()
-        self.planner_sm = PlannerSubMaster()
-        self.lateral_planner = LateralPlanner(self.CP)
+        self.planner_sm = PlannerSubMaster() if self.use_openpilot_planner else None
+        self.lateral_planner = LateralPlanner(self.CP) if self.use_openpilot_planner else None
 
     def make_lateral_controller(self, controller_classes):
         which = self.CP.lateralTuning.which()
@@ -819,6 +850,19 @@ class OpenpilotHyundaiController:
             self.last_planner_frame_id = None
             return
         if self.last_planner_frame_id == model_snapshot.frame_id:
+            return
+
+        if not self.use_openpilot_planner:
+            self.last_planner_frame_id = model_snapshot.frame_id
+            plan = model_snapshot.lateral_plan
+            if plan.valid:
+                self.lateral_plan = plan
+                return
+            target = model_snapshot.lateral_target
+            self.lateral_plan = LateralPlan(valid=target.valid,
+                                            mpc_solution_valid=target.valid,
+                                            curvatures=[target.curvature] * CONTROL_N,
+                                            d_path_points=[target.target_y] * CONTROL_N)
             return
 
         controls_state = self.planner_controls_state(car_state)
@@ -954,7 +998,7 @@ def main() -> int:
         while not stop:
             last_model_seq, model_payload = model_sub.read_new(last_model_seq, 0)
             if model_payload:
-                model_snapshot = decode_k230_model_state(model_payload)
+                model_snapshot = decode_model_snapshot(model_payload)
 
             last_can_seq, can_payload = can_sub.read_new(last_can_seq, 1000)
             if not can_payload:
@@ -972,6 +1016,7 @@ def main() -> int:
                     safety = controller.CP.safetyConfigs[0]
                     print(f"k230_controlsd: openpilot={controller.openpilot_path} "
                           f"candidate={controller.candidate} enabled={int(controller.enabled)} "
+                          f"openpilotPlanner={int(controller.use_openpilot_planner)} "
                           f"latTune={controller.CP.lateralTuning.which()} "
                           f"sccBus={controller.CP.sccBus} "
                           f"mdpsBus={controller.CP.mdpsBus} sasBus={controller.CP.sasBus} "

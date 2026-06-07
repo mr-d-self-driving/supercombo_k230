@@ -103,6 +103,13 @@ K230_RSYNC_RSH="sshpass -p '<password>' ssh -o PubkeyAuthentication=no -o Prefer
   scripts/upload_to_board.sh root@192.168.219.115
 ```
 
+If the board is reachable at a different address, pass it explicitly:
+
+```sh
+K230_RSYNC_RSH="sshpass -p '<password>' ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password -o StrictHostKeyChecking=no" \
+  scripts/upload_to_board.sh root@192.168.219.106
+```
+
 `deps/k230_sysroot/` and `build-mac-rv64/` are local generated directories and
 are not tracked. The sysroot sync script also points OpenCV `core/imgproc`
 development symlinks at the board's `*.so.410` libraries, avoiding the broken
@@ -119,6 +126,14 @@ Openpilot-style split runtime:
 ```sh
 cd /root/supercombo_native
 ./k230_manager.py models/supercombo_gemm_split3_iddwelu223_gru_splitplan_delta_int16a_uint8w_real80_noclip.kmodel 0
+```
+
+If another demo already owns the camera preview device, stop it before starting
+this runtime. For example, `camera_rtsp_demo` keeps `/dev/video1` busy and makes
+`k230_overlay` fail with `VIDIOC_S_FMT ... Device or resource busy`:
+
+```sh
+pkill -TERM -f '[.]\/camera_rtsp_demo' || true
 ```
 
 The split runtime gives the model pipeline priority and keeps display work to a
@@ -179,6 +194,22 @@ The model input preparation always uses the calibrated homography
 `NV12 -> YUV6` path. With default intrinsics and zero rpy it is
 identity-equivalent to the previous direct packer, but the same path can apply
 manual or online calibration without changing the camera/display pipeline.
+
+Latest K230 board smoke check:
+
+- Board: `root@192.168.219.106`, Ubuntu riscv64, Linux `6.6.36`.
+- Cross-build output is RISC-V `lp64d` ELF for `k230_camerad`, `k230_modeld`,
+  `k230_overlay`, `k230_pandad`, and `supercombo.elf`.
+- After stopping `camera_rtsp_demo`, a 30 second live run completed with:
+  - `k230_overlay`: `errors=0`
+  - `k230_camerad`: `839` frames, `errors=0`, `29.94 fps`
+  - `k230_modeld`: `698` frames, `errors=0`, `25.24 fps`
+- With `K230_ENABLE_PANDA=1 K230_PANDA_TX=0`, panda shadow mode also ran for
+  20 seconds:
+  - panda connected over USB, TX disabled, `rx=0` because the vehicle harness
+    was not connected
+  - `k230_camerad`: `579` frames, `errors=0`, `29.92 fps`
+  - `k230_modeld`: `471` frames, `errors=0`, `24.84 fps`
 
 Calibration/input-warp equivalence checks:
 
